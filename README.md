@@ -14,6 +14,48 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 > Bu README hedef mimariyi tanımlar. Inventory Service başlangıcı ve JPA modelleri oluşturulmuştur; endpointler, mesaj akışları, migration ve DevOps bileşenleri henüz uygulanmamıştır. Geliştirme ilerledikçe durum tablosu ve doğrulama kayıtları gerçek sonuçlarla güncellenecektir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
 
+## Mevcut Inventory API — 14 Ekim 2026
+
+`POST /api/v1/reservations` endpointi eklendi. Controller, `ReserveStockRequest` DTO'sunu doğrular ve mevcut Inventory Service'i çağırır. Yanıtta JPA entity yerine `ReservationResponse` döner; ürünün tamamı veya JPA ilişkileri JSON'a taşınmaz.
+
+### Postman ile ilk deneme
+
+Uygulamayı kendi PostgreSQL bağlantı ayarların ve `DB_PASSWORD` ortam değişkeninle başlat. Önce veritabanında bir ürün ve ona bağlı stok kaydı bulunmalıdır. Aşağıdaki `productId` örnektir; kendi ürününün kimliğiyle değiştir.
+
+```http
+POST http://localhost:8080/api/v1/reservations
+Content-Type: application/json
+```
+
+```json
+{
+  "orderId": "22222222-2222-2222-2222-222222222222",
+  "productId": "11111111-1111-1111-1111-111111111111",
+  "quantity": 2
+}
+```
+
+Başarılı istek HTTP **200** döner. Mevcut service yeni kayıt veya aynı isteğin tekrarı ayrımını controller'a vermediğinden her iki başarı durumunda 200 kullanılır. Yanıt alanları: `id`, `orderId`, `productId`, `quantity`, `status`, `createdAt`, `updatedAt`. Kimlik, durum ve zamanları istemci belirlemez.
+
+| Durum | HTTP |
+|---|---:|
+| Eksik kimlik/miktar, sıfır veya negatif miktar | 400 |
+| Bozuk JSON, geçersiz UUID veya okunamayan miktar | 400 |
+| Mevcut service'in IllegalArgumentException iş hataları | 400 |
+| Veritabanı benzersizlik/kısıt çakışması | 409 |
+| Geçici kilit veya veri erişim sorunu | 503 |
+| Beklenmeyen sunucu hatası | 500 |
+
+Hatalar `application/problem+json` gövdesinde `status`, `title`, `detail`, `instance`, `code` alanlarıyla döner. Alan doğrulama hatalarında ayrıca `errors` bulunur. Veritabanı hata ayrıntıları ve stacktrace yanıta eklenmez. Ürün bulunamama, pasif ürün, yetersiz stok ve farklı içerikli sipariş tekrarı şu an service'te aynı exception türünü kullanır; 404/409 gibi daha özel business hata ayrımı ileride typed exception'larla yapılacaktır.
+
+### Doğrulama
+
+```text
+mvn -o -Dtest=ReservationControllerTest test
+```
+
+17 controller testi geçti. Testler gerçek Spring MVC yönlendirme, JSON/DTO dönüşümü ve validation kullanır; service yerine test double vardır. Gerçek PostgreSQL transaction'ı, stok kilidi, Flyway ve eşzamanlı idempotency bu testlerin kapsamında değildir. Tekrarlı istekte aynı yanıt testi yalnız controller sözleşmesini doğrular. Aynı siparişin eşzamanlı tekrarında service'in mevcut unique constraint davranışı ayrıca ele alınmalıdır. Tam uygulama başlangıcı, mevcut context testi ve Postman/DB akışı bu aşamada yeniden doğrulanmadı.
+
 ## İçindekiler
 
 - [1. Problem ve kapsam](#1-problem-ve-kapsam)
