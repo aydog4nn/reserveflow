@@ -6,6 +6,6 @@ import java.util.UUID;
 
 public interface IInventoryService {
 
-    public Reservation reserveStock(UUID orderId, UUID productId, int quantity) throws IllegalAccessException;
+    Reservation reserveStock(UUID orderId, UUID productId, int quantity);
 
 }
