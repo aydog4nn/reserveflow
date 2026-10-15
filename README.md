@@ -131,7 +131,27 @@ mvn -Dtest=ProductControllerTest,ReservationControllerTest,ProductMapperTest tes
 - Aynı SKU tekrarında 409 ve negatif başlangıç stoğunda validation hatası.
 - API'den oluşturulan ürün kimliğiyle başarılı rezervasyon.
 
-**Henüz kanıtlanmayanlar:** Gerçek PostgreSQL üzerinde otomatik entegrasyon testleri, eşzamanlı overselling/idempotency ve kontrollü hata enjeksiyonuyla transaction rollback. Yetersiz stokta değişiklik olmaması, kayıt sonrası hata durumunda rollback kanıtı değildir. Aynı orderId ile eşzamanlı iki isteğin unique constraint yarışı ayrıca ele alınmalıdır.
+### PostgreSQL üzerinde eşzamanlı rezervasyon testi
+
+```bash
+mvn -Dtest=InventoryConcurrencyTest test
+```
+
+Docker çalışıyor olmalıdır. Testcontainers, Compose ortamından bağımsız, rastgele host portlu geçici bir PostgreSQL 17 container'ı açar. Test datasource ayarları bu container'a yönlendirilir; geliştirme veritabanı ve volume'u kullanılmaz. Şema gerçek Flyway migration'ıyla hazırlanır. Container test sınıfı tamamlandığında kapatılır.
+
+`InventoryConcurrencyTest`, gerçek Spring service bean'lerini ve repository'leri kullanır; service mock değildir. Her tekrarda benzersiz bir ürün ve 5 adet stok oluşturulur. İki worker hazır olana kadar beklenir, sonra ortak başlangıç sinyaliyle iki farklı sipariş için 4'er adet rezervasyon çağrısı başlatılır. Her service çağrısı kendi transaction'ında çalışır; test metodunda dış transaction yoktur.
+
+**Doğrulanan sonuç:** Senaryo 5 tekrarda geçti. Her seferinde bir rezervasyon başarılı, diğeri tam olarak yetersiz stok hatasıyla başarısız oldu. Stok `onHand=5`, `reserved=4`, `available=1`; iki sipariş arasında yalnız bir rezervasyon kaydı bulundu. Gelecek beklemeleri ve DB kilit beklemesi süreyle sınırlandırıldı. Bu, belirli bir eşzamanlı senaryonun entegrasyon testidir; bütün olası zamanlamaların veya yüksek yükün kanıtı değildir.
+
+### Ürün ve stok oluşturma işleminde rollback testi
+
+Aynı test sınıfındaki `rollsBackProductWhenStockInsertFails`, yalnız geçici test veritabanına `on_hand = 13` değerini reddeden bir CHECK constraint ekler. Bu geçerli bir API girdisidir; kural bir production iş kuralı değil, kontrollü hata enjeksiyonudur. Gerçek ürün service'i çağrılır ve stok INSERT'inin beklenen constraint nedeniyle başarısız olduğu doğrulanır.
+
+Çağrı tamamlandıktan sonra ayrı JDBC sorgularıyla SKU'nun veritabanında bulunmadığı, ürün ve stok sayılarının değişmediği kontrol edilir. Böylece ürün/stok oluşturma transaction'ının atomik olarak geri alındığı doğrulanır. Geçici constraint `finally` içinde kaldırılır; aynı SKU ve 13 adet stokla tekrar oluşturmanın başarılı olduğu da kontrol edilir. Service ve migration kodu değiştirilmez.
+
+Bu sınıfta 5 eşzamanlılık tekrarı ve 1 rollback testi başarılıdır. Bu kanıt ürün oluşturma işlemine aittir; rezervasyon sırasında stok değişikliğinden sonra oluşan bir hatanın rollback testi değildir.
+
+**Henüz kanıtlanmayanlar:** Aynı siparişin eşzamanlı tekrarında idempotency, yüksek yük ve rezervasyon işleminde kontrollü hata sonrası rollback. Aynı orderId ile eşzamanlı iki isteğin unique constraint yarışı ayrıca ele alınmalıdır.
 
 **Kalan ana kapsam:** Ürün/stok okuma API'leri, rezervasyon commit/release, Order ve Payment Simulator, RabbitMQ/saga/outbox/inbox, Jenkins, Terraform, Ansible, Kubernetes ve monitoring. Mevcut Docker ortamı production hazır veya yüksek erişilebilir bir sistem değildir.
 
