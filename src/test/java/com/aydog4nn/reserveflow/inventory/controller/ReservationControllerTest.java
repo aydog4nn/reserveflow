@@ -3,6 +3,8 @@ package com.aydog4nn.reserveflow.inventory.controller;
 import com.aydog4nn.reserveflow.inventory.domain.Product;
 import com.aydog4nn.reserveflow.inventory.domain.Reservation;
 import com.aydog4nn.reserveflow.inventory.exception.ApiExceptionHandler;
+import com.aydog4nn.reserveflow.inventory.mapper.ReservationMapper;
+import org.mapstruct.factory.Mappers;
 import com.aydog4nn.reserveflow.inventory.service.abs.IInventoryService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,7 +48,8 @@ class ReservationControllerTest {
         inventoryService = new StubInventoryService();
         validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
-        mockMvc = MockMvcBuilders.standaloneSetup(new ReservationController(inventoryService))
+        mockMvc = MockMvcBuilders.standaloneSetup(new ReservationController(
+                        inventoryService, Mappers.getMapper(ReservationMapper.class)))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .setValidator(validator)
                 .build();

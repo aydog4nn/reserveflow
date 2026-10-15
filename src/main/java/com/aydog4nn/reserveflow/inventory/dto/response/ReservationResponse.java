@@ -1,6 +1,5 @@
 package com.aydog4nn.reserveflow.inventory.dto.response;
 
-import com.aydog4nn.reserveflow.inventory.domain.Reservation;
 import com.aydog4nn.reserveflow.inventory.domain.ReservationStatus;
 
 import java.time.Instant;
@@ -16,15 +15,4 @@ public record ReservationResponse(
         Instant updatedAt
 ) {
 
-    public static ReservationResponse from(Reservation reservation) {
-        return new ReservationResponse(
-                reservation.getId(),
-                reservation.getOrderId(),
-                reservation.getProduct().getId(),
-                reservation.getQuantity(),
-                reservation.getStatus(),
-                reservation.getCreatedAt(),
-                reservation.getUpdatedAt()
-        );
-    }
 }
