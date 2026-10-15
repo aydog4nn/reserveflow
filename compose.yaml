@@ -16,5 +16,20 @@ services:
       retries: 10
       start_period: 10s
 
+  inventory:
+    build:
+      context: .
+    image: reserveflow-inventory:local
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/inventory_db
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+
 volumes:
   postgres_data:
