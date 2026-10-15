@@ -47,7 +47,7 @@ public class Product {
     @Column(nullable = false)
     private boolean active;
 
-    protected Product() {
+    public Product() {
     }
 
     public Product(String sku, String name, BigDecimal unitPrice, String currency) {

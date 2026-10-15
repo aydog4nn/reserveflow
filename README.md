@@ -6,21 +6,87 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 | Bilgi | Durum |
 |---|---|
-| Belge tarihi | 12 Ekim 2026 |
-| Proje aşaması | Inventory Service başlangıcı; JPA modelleri eklendi, diğer bileşenler planlandı |
+| Belge tarihi | 15 Ekim 2026 |
+| Proje aşaması | Inventory ürün/stok oluşturma ve rezervasyon API'leri Docker Compose ortamında çalışıyor; diğer servisler ve CI/CD planlandı |
 | İlk çalışma dönemi | 30 gün; günlük yaklaşık 5–6 saat varsayımı |
 | Ana hedef | Backend/mikroservis kararları ile DevOps operasyonlarını aynı çalışan sistemde göstermek |
 | Kullanım | Yerel ve staging laboratuvarı; gerçek ödeme veya gerçek müşteri verisi yok |
 
-> Bu README hedef mimariyi tanımlar. Inventory Service başlangıcı ve JPA modelleri oluşturulmuştur; endpointler, mesaj akışları, migration ve DevOps bileşenleri henüz uygulanmamıştır. Geliştirme ilerledikçe durum tablosu ve doğrulama kayıtları gerçek sonuçlarla güncellenecektir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
+> Aşağıdaki mevcut durum bölümü uygulanmış işleri, numaralı mimari bölümleri ise büyük ölçüde hedef tasarımı anlatır. Hedef diyagramlar ve 30 aşamalı plan bir tamamlanma beyanı değildir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
 
-## Mevcut Inventory API — 14 Ekim 2026
+## Mevcut durum — 15 Ekim 2026
+
+### Tamamlanan işler
+
+| Alan | Uygulanan kapsam |
+|---|---|
+| Domain ve veri | Product, Stock, Reservation; JPA repository'leri; PostgreSQL kısıtları ve Flyway migration |
+| Ürün oluşturma | Ürün ve başlangıç stoğunu tek transaction içinde oluşturma; benzersiz SKU |
+| Rezervasyon | Aktif ürün ve yeterli stok kontrolü; transactional stok ayırma; pessimistic write kilidi; ardışık istek tekrarı |
+| API sözleşmesi | Request/response record DTO'ları, Bean Validation ve merkezi ProblemDetail hata yanıtları |
+| Mapping | MapStruct 1.6.3; Spring mapper bean'leri; ProductMapper ve ReservationMapper; eşlenmeyen hedef alanlarında derleme hatası |
+| Paketleme | Java 21 multi-stage Dockerfile; yalnız JRE ve JAR içeren runtime aşaması; root olmayan UID/GID 10001 |
+| Yerel ortam | Compose ile Inventory ve PostgreSQL 17; healthcheck, başlangıç bağımlılığı ve named volume |
+| Yapılandırma | DB_URL, DB_USERNAME, DB_PASSWORD; .gitignore ve .dockerignore ile yerel ortam dosyalarının dışlanması |
+| Karar kayıtları | Mimari karar, domain kuralları ve altyapı planı için docs/adr belgeleri |
+
+Mevcut repo hâlâ Inventory Maven projesi kök düzenindedir; hedef monorepo servis dizinlerine henüz taşınmadı. Kullanıcı adı olarak yerel laboratuvarda PostgreSQL'in bootstrap kullanıcısı kullanılıyor; bu, production için en az yetkili uygulama rolü tasarımı değildir.
+
+### Docker Compose ile çalıştırma
+
+Gereksinimler: çalışan Docker Engine ve Docker Compose. Proje kökünde Git'e eklenmeyen bir `.env` dosyasında `DB_PASSWORD` tanımla:
+
+```dotenv
+DB_PASSWORD=yerel_guclu_parolanizi_buraya_yazin
+```
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=80 inventory
+```
+
+- API: `http://localhost:8080`.
+- Bilgisayardan PostgreSQL: `localhost:5433/inventory_db`.
+- Inventory container'ından PostgreSQL: `postgres:5432/inventory_db`; container içinde `localhost` veritabanını göstermez.
+- Aynı anda IntelliJ uygulamasını 8080 portunda çalıştırma.
+- Compose, PostgreSQL sağlıklı olunca Inventory'yi başlatır. Healthcheck migration veya iş akışı testi değildir; sonradan oluşan kesintileri çözmez.
+- Flyway tabloları oluşturur; Hibernate `ddl-auto=validate` ile entity/şema uyumunu kontrol eder.
+- Kod değişince `docker compose up -d --build inventory` ile image ve container'ı güncelle.
+- `docker compose down` named volume'u korur. **`docker compose down -v` veritabanı volume'unu ve verilerini siler.**
+- `POSTGRES_*` başlangıç ayarları yalnız boş veri alanının ilk kurulumunda uygulanır; `.env` parolasını değiştirmek mevcut DB parolasını değiştirmez.
+
+Docker build şu an `-DskipTests` kullanır; image build başarısı testlerin geçtiğinin kanıtı değildir. Jenkins henüz yoktur.
+
+### Ürün ve başlangıç stoğu oluşturma
+
+```http
+POST http://localhost:8080/api/v1/products
+Content-Type: application/json
+```
+
+```json
+{
+  "sku": "KLV-SIYAH-001",
+  "name": "Siyah Klavye",
+  "unitPrice": 1500.00,
+  "currency": "TRY",
+  "initialStock": 10
+}
+```
+
+Başarıda **201 Created**; yanıt alanları `id`, `sku`, `name`, `unitPrice`, `currency`, `active`, `onHand`, `reserved`, `available`. Başlangıçta `active=true`, `onHand=initialStock`, `reserved=0`, `available=onHand-reserved`.
+
+SKU ve ad boş olamaz; uzunluk sınırları 64 ve 255'tir. Fiyat zorunlu, negatif olmayan ve en fazla 17 tam/2 ondalık basamaklıdır. Para birimi üç büyük harftir; gerçek ISO kod listesi kontrolü henüz yoktur. Başlangıç stoğu zorunlu ve negatif olmayan tam sayıdır. Alan hataları **400 / VALIDATION_FAILED**, SKU unique constraint çakışması **409 / DATA_CONFLICT** döner. Oluşturma endpointi idempotent değildir; aynı SKU'yu tekrar oluşturmak mevcut ürünü döndürmez.
+
+### Rezervasyon oluşturma
 
 `POST /api/v1/reservations` endpointi eklendi. Controller, `ReserveStockRequest` DTO'sunu doğrular ve mevcut Inventory Service'i çağırır. Yanıtta JPA entity yerine `ReservationResponse` döner; ürünün tamamı veya JPA ilişkileri JSON'a taşınmaz.
 
 ### Postman ile ilk deneme
 
-Uygulamayı kendi PostgreSQL bağlantı ayarların ve `DB_PASSWORD` ortam değişkeninle başlat. Önce veritabanında bir ürün ve ona bağlı stok kaydı bulunmalıdır. Aşağıdaki `productId` örnektir; kendi ürününün kimliğiyle değiştir.
+Önce ürün endpointiyle bir ürün ve stok oluştur. Aşağıdaki `productId` örnektir; ürün oluşturma yanıtındaki `id` ile değiştir. IntelliJ'den çalıştırırken DB_URL, DB_USERNAME ve DB_PASSWORD ayrı ortam değişkenleri olarak verilmelidir; Spring Boot Compose'un `.env` dosyasını kendiliğinden okumaz.
 
 ```http
 POST http://localhost:8080/api/v1/reservations
@@ -51,10 +117,23 @@ Hatalar `application/problem+json` gövdesinde `status`, `title`, `detail`, `ins
 ### Doğrulama
 
 ```text
-mvn -o -Dtest=ReservationControllerTest test
+mvn -Dtest=ProductControllerTest,ReservationControllerTest,ProductMapperTest test
 ```
 
-17 controller testi geçti. Testler gerçek Spring MVC yönlendirme, JSON/DTO dönüşümü ve validation kullanır; service yerine test double vardır. Gerçek PostgreSQL transaction'ı, stok kilidi, Flyway ve eşzamanlı idempotency bu testlerin kapsamında değildir. Tekrarlı istekte aynı yanıt testi yalnız controller sözleşmesini doğrular. Aynı siparişin eşzamanlı tekrarında service'in mevcut unique constraint davranışı ayrıca ele alınmalıdır. Tam uygulama başlangıcı, mevcut context testi ve Postman/DB akışı bu aşamada yeniden doğrulanmadı.
+**Otomatik doğrulama:** Seçili 31 test geçti: 12 ürün controller, 17 rezervasyon controller ve 2 ürün mapper testi. Controller testlerinde gerçek MVC yönlendirme, JSON dönüşümü ve validation, service yerine test double kullanılır. Mapper testleri derlemede üretilen implementasyonu kullanır. Bu komut tüm test suite'ini veya uygulama context testini çalıştırmaz; bağımlılıklar cache'deyse `-o` eklenebilir.
+
+**Kullanıcının yerel Docker/Postman ortamında doğruladığı manuel senaryolar:**
+- Uygulama ve PostgreSQL container'larının başlatılması, Flyway tablolarının oluşması.
+- Uygulama kapalıyken DB container'ını kaldırıp yeniden oluşturduktan sonra tabloların korunması.
+- Başarılı rezervasyon ve ardışık aynı istekte reserved değerinin artmaması.
+- Yetersiz stok isteğinde stok değerlerinin değişmemesi.
+- Ürün oluşturma yanıtında stok değerlerinin 10/0/10 olması.
+- Aynı SKU tekrarında 409 ve negatif başlangıç stoğunda validation hatası.
+- API'den oluşturulan ürün kimliğiyle başarılı rezervasyon.
+
+**Henüz kanıtlanmayanlar:** Gerçek PostgreSQL üzerinde otomatik entegrasyon testleri, eşzamanlı overselling/idempotency ve kontrollü hata enjeksiyonuyla transaction rollback. Yetersiz stokta değişiklik olmaması, kayıt sonrası hata durumunda rollback kanıtı değildir. Aynı orderId ile eşzamanlı iki isteğin unique constraint yarışı ayrıca ele alınmalıdır.
+
+**Kalan ana kapsam:** Ürün/stok okuma API'leri, rezervasyon commit/release, Order ve Payment Simulator, RabbitMQ/saga/outbox/inbox, Jenkins, Terraform, Ansible, Kubernetes ve monitoring. Mevcut Docker ortamı production hazır veya yüksek erişilebilir bir sistem değildir.
 
 ## İçindekiler
 
