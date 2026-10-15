@@ -153,7 +153,26 @@ Bu sınıfta 5 eşzamanlılık tekrarı ve 1 rollback testi başarılıdır. Bu 
 
 **Henüz kanıtlanmayanlar:** Aynı siparişin eşzamanlı tekrarında idempotency, yüksek yük ve rezervasyon işleminde kontrollü hata sonrası rollback. Aynı orderId ile eşzamanlı iki isteğin unique constraint yarışı ayrıca ele alınmalıdır.
 
-**Kalan ana kapsam:** Ürün/stok okuma API'leri, rezervasyon commit/release, Order ve Payment Simulator, RabbitMQ/saga/outbox/inbox, Jenkins, Terraform, Ansible, Kubernetes ve monitoring. Mevcut Docker ortamı production hazır veya yüksek erişilebilir bir sistem değildir.
+### Rezervasyon kesinleştirme ve serbest bırakma
+
+İstek gövdesi olmadan, URL'de **sipariş kimliği** (`orderId`, rezervasyon ID'si değil) gönderilir:
+
+| Endpoint | Davranış | Başarı |
+|---|---|---|
+| POST /api/v1/reservations/by-order/{orderId}/commit | RESERVED → COMMITTED; onHand ve reserved miktar kadar azalır | 200 + ReservationResponse |
+| POST /api/v1/reservations/by-order/{orderId}/release | RESERVED → RELEASED; yalnız reserved azalır | 200 + ReservationResponse |
+
+Aynı tamamlanmış işlem tekrarlanırsa mevcut rezervasyon döner ve stok tekrar değişmez. COMMITTED → release ve RELEASED → commit reddedilir. Service önce rezervasyon satırını, sonra stok satırını pessimistic write ile kilitler; değişiklikler aynı transaction içinde tamamlanır. Durum geçişi ve stok işlemleri ayrı private yardımcı metotlarla yönetilir.
+
+Geçersiz UUID 400, bulunamayan rezervasyon ve çelişkili durum geçişleri mevcut ortak hata yönetimi nedeniyle 400 / INVALID_RESERVATION döner. Hedef mimarideki daha özel 404/409 business hata ayrımı henüz uygulanmadı. Stok tutarsızlığı IllegalStateException ile işlemi durdurur ve genel 500 yanıtına gider.
+
+```bash
+mvn -Dtest=ReservationLifecycleTest,InventoryConcurrencyTest,ProductControllerTest,ReservationControllerTest,ProductMapperTest test
+```
+
+**Son seçili koşum: 53 test başarılı.** Bunların 10'u gerçek PostgreSQL kullanan yaşam döngüsü testleridir: commit/release stok hesapları, ardışık tekrarlar, ters geçişlerin reddi, eksik/null siparişler ve 5 tekrarlı eşzamanlı commit/release yarışı. Ayrıca lifecycle HTTP yolları, UUID dönüşümü ve business hataları için 6 controller testi eklendi. Yarışta yalnız bir geçişin başarılı olduğu ve kalıcı stok değerlerinin kazanan durumla tutarlı olduğu kontrol edildi; bütün olası zamanlamalar veya yüksek yük kanıtlanmış değildir. Yeni endpointler için Docker/Postman manuel doğrulaması henüz yapılmadı.
+
+**Kalan ana kapsam:** Ürün/stok okuma API'leri, Order ve Payment Simulator, RabbitMQ/saga/outbox/inbox, Jenkins, Terraform, Ansible, Kubernetes ve monitoring. Commit/release işlemlerinin mesajlaşma ve saga bağlantısı henüz yoktur. Mevcut Docker ortamı production hazır veya yüksek erişilebilir bir sistem değildir.
 
 ## İçindekiler
 

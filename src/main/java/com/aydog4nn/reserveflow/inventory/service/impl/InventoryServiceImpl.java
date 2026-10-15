@@ -2,6 +2,7 @@ package com.aydog4nn.reserveflow.inventory.service.impl;
 
 import com.aydog4nn.reserveflow.inventory.domain.Product;
 import com.aydog4nn.reserveflow.inventory.domain.Reservation;
+import com.aydog4nn.reserveflow.inventory.domain.ReservationStatus;
 import com.aydog4nn.reserveflow.inventory.domain.Stock;
 import com.aydog4nn.reserveflow.inventory.repository.ProductRepository;
 import com.aydog4nn.reserveflow.inventory.repository.ReservationRepository;
@@ -113,5 +114,109 @@ public class InventoryServiceImpl implements IInventoryService {
 
         Reservation reservation = new Reservation(orderId, product, quantity);
         return reservationRepository.save(reservation);
+    }
+
+    private Reservation findReservationForUpdate(UUID orderId) {
+        if (orderId == null) {
+            throw new IllegalArgumentException("Sipariş kimliği zorunlu.");
+        }
+
+        return reservationRepository.findByOrderIdForUpdate(orderId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Rezervasyon bulunamadı.")
+                );
+    }
+
+    private void commitReservedStock(Reservation reservation){
+
+        Stock stock = stockRepository.findByProductIdForUpdate(
+                reservation.getProduct().getId()
+        ).orElseThrow(() ->
+                new IllegalArgumentException("Ürünün stok kaydı bulunamadı.")
+        );
+
+        int quantity = reservation.getQuantity();
+        if (stock.getReserved() < quantity || stock.getOnHand() < quantity) {
+            throw new IllegalStateException(
+                    "Stok değerleri rezervasyonla tutarlı değil."
+            );
+        }
+
+        stock.setOnHand(stock.getOnHand() - quantity);
+        stock.setReserved(stock.getReserved() - quantity);
+
+
+    }
+
+
+    private boolean validateCommitState(Reservation reservation) {
+        if (reservation.getStatus() == ReservationStatus.RELEASED) {
+            throw new IllegalArgumentException(
+                    "Serbest bırakılmış rezervasyon kesinleştirilemez."
+            );
+        }
+
+        return reservation.getStatus() == ReservationStatus.COMMITTED;
+    }
+
+    @Transactional
+    @Override
+    public Reservation commitReservation(UUID orderId) {
+
+        Reservation reservation = findReservationForUpdate(orderId);
+        boolean alreadyCommitted = validateCommitState(reservation);
+
+        if (alreadyCommitted) {
+            return reservation;
+        }
+
+        commitReservedStock(reservation);
+        reservation.setStatus(ReservationStatus.COMMITTED);
+
+        return reservation;
+    }
+
+    private boolean validateReleaseState(Reservation reservation) {
+        if (reservation.getStatus() == ReservationStatus.COMMITTED) {
+            throw new IllegalArgumentException(
+                    "Kesinleşmiş rezervasyon serbest bırakılamaz."
+            );
+        }
+
+        return reservation.getStatus() == ReservationStatus.RELEASED;
+    }
+
+    private void releaseReservedStock(Reservation reservation) {
+        Stock stock = stockRepository.findByProductIdForUpdate(
+                reservation.getProduct().getId()
+        ).orElseThrow(() ->
+                new IllegalArgumentException("Ürünün stok kaydı bulunamadı.")
+        );
+
+        int quantity = reservation.getQuantity();
+
+        if (stock.getReserved() < quantity) {
+            throw new IllegalStateException(
+                    "Ayrılan stok miktarı rezervasyonla tutarlı değil."
+            );
+        }
+
+        stock.setReserved(stock.getReserved() - quantity);
+    }
+
+    @Override
+    @Transactional
+    public Reservation releaseReservation(UUID orderId) {
+        Reservation reservation = findReservationForUpdate(orderId);
+        boolean alreadyReleased = validateReleaseState(reservation);
+
+        if (alreadyReleased) {
+            return reservation;
+        }
+
+        releaseReservedStock(reservation);
+        reservation.setStatus(ReservationStatus.RELEASED);
+
+        return reservation;
     }
 }

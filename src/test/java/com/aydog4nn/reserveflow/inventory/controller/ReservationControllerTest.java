@@ -2,6 +2,7 @@ package com.aydog4nn.reserveflow.inventory.controller;
 
 import com.aydog4nn.reserveflow.inventory.domain.Product;
 import com.aydog4nn.reserveflow.inventory.domain.Reservation;
+import com.aydog4nn.reserveflow.inventory.domain.ReservationStatus;
 import com.aydog4nn.reserveflow.inventory.exception.ApiExceptionHandler;
 import com.aydog4nn.reserveflow.inventory.mapper.ReservationMapper;
 import org.mapstruct.factory.Mappers;
@@ -182,6 +183,65 @@ class ReservationControllerTest {
         assertEquals(0, inventoryService.invocationCount);
     }
 
+
+    @Test
+    void commitReturnsUpdatedResponse() throws Exception {
+        inventoryService.result = reservation();
+        inventoryService.result.setStatus(ReservationStatus.COMMITTED);
+        mockMvc.perform(post("/api/v1/reservations/by-order/{orderId}/commit", ORDER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(RESERVATION_ID.toString()))
+                .andExpect(jsonPath("$.orderId").value(ORDER_ID.toString()))
+                .andExpect(jsonPath("$.status").value("COMMITTED"))
+                .andExpect(jsonPath("$.product").doesNotExist());
+        assertEquals(ORDER_ID, inventoryService.lastOrderId);
+        assertEquals(1, inventoryService.invocationCount);
+    }
+
+    @Test
+    void commitRejectsInvalidOrderId() throws Exception {
+        mockMvc.perform(post("/api/v1/reservations/by-order/not-a-uuid/commit"))
+                .andExpect(status().isBadRequest());
+        assertEquals(0, inventoryService.invocationCount);
+    }
+
+    @Test
+    void commitPreservesBusinessError() throws Exception {
+        inventoryService.failure = new IllegalArgumentException("Geçersiz durum geçişi.");
+        mockMvc.perform(post("/api/v1/reservations/by-order/{orderId}/commit", ORDER_ID))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RESERVATION"));
+    }
+
+    @Test
+    void releaseReturnsUpdatedResponse() throws Exception {
+        inventoryService.result = reservation();
+        inventoryService.result.setStatus(ReservationStatus.RELEASED);
+        mockMvc.perform(post("/api/v1/reservations/by-order/{orderId}/release", ORDER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(RESERVATION_ID.toString()))
+                .andExpect(jsonPath("$.orderId").value(ORDER_ID.toString()))
+                .andExpect(jsonPath("$.status").value("RELEASED"))
+                .andExpect(jsonPath("$.product").doesNotExist());
+        assertEquals(ORDER_ID, inventoryService.lastOrderId);
+        assertEquals(1, inventoryService.invocationCount);
+    }
+
+    @Test
+    void releaseRejectsInvalidOrderId() throws Exception {
+        mockMvc.perform(post("/api/v1/reservations/by-order/not-a-uuid/release"))
+                .andExpect(status().isBadRequest());
+        assertEquals(0, inventoryService.invocationCount);
+    }
+
+    @Test
+    void releasePreservesBusinessError() throws Exception {
+        inventoryService.failure = new IllegalArgumentException("Geçersiz durum geçişi.");
+        mockMvc.perform(post("/api/v1/reservations/by-order/{orderId}/release", ORDER_ID))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RESERVATION"));
+    }
+
     private static class StubInventoryService implements IInventoryService {
 
         private Reservation result;
@@ -190,6 +250,26 @@ class ReservationControllerTest {
         private UUID lastOrderId;
         private UUID lastProductId;
         private int lastQuantity;
+
+        @Override
+        public Reservation commitReservation(UUID orderId) {
+            invocationCount++;
+            lastOrderId = orderId;
+            if (failure != null) {
+                throw failure;
+            }
+            return result;
+        }
+
+        @Override
+        public Reservation releaseReservation(UUID orderId) {
+            invocationCount++;
+            lastOrderId = orderId;
+            if (failure != null) {
+                throw failure;
+            }
+            return result;
+        }
 
         @Override
         public Reservation reserveStock(UUID orderId, UUID productId, int quantity) {
