@@ -39,3 +39,7 @@ build/
 *.tfstate
 *.tfstate.*
 .terraform/
+
+.env
+.env.*
+!.env.example
