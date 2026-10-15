@@ -8,4 +8,7 @@ public interface IInventoryService {
 
     Reservation reserveStock(UUID orderId, UUID productId, int quantity);
 
+    Reservation commitReservation(UUID orderId);
+
+    Reservation releaseReservation(UUID orderId);
 }
