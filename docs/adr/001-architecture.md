@@ -1,7 +1,9 @@
 # ADR-001: Tek Repo ve Bağımsız Servisler
 
 ## Durum
-Kabul edildi. Hedef mimaridir; şu an yalnız Inventory geliştiriliyor.
+Kabul edildi. Inventory iş akışları uygulanmıştır; Order ve Payment
+uygulama iskeletleri oluşturulmuştur. Servisler arası iletişim ve
+Order/Payment veritabanları henüz uygulanmamıştır.
 
 ## Bağlam
 ReserveFlow ile stok rezervasyonu üzerinden backend geliştirme,
@@ -10,6 +12,9 @@ servisler arası iletişim ve DevOps yaşam döngüsünü öğreniyoruz.
 ## Karar
 - Inventory, Order ve Payment Simulator aynı Git reposunda tutulacak.
 - Her servis bağımsız build edilip dağıtılabilecek.
+- Servisler services/ altında kendi Maven projesi ve Dockerfile'ına sahip
+  olacak. Kök Maven projesi yalnız toplu build için aggregator olacak;
+  servisler birbirlerinin Java koduna bağımlı olmayacak.
 - Her servis kendi veritabanına sahip olacak.
 - Servisler birbirinin tablolarına doğrudan erişmeyecek.
 

@@ -7,7 +7,7 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 | Bilgi | Durum |
 |---|---|
 | Belge tarihi | 15 Ekim 2026 |
-| Proje aşaması | Inventory ürün/stok oluşturma ve rezervasyon API'leri Docker Compose ortamında çalışıyor; diğer servisler ve CI/CD planlandı |
+| Proje aşaması | Inventory iş akışları hazır; Order ve Payment bağımsız uygulama iskeletleri eklendi; servis iletişimi ve CI/CD planlandı |
 | İlk çalışma dönemi | 30 gün; günlük yaklaşık 5–6 saat varsayımı |
 | Ana hedef | Backend/mikroservis kararları ile DevOps operasyonlarını aynı çalışan sistemde göstermek |
 | Kullanım | Yerel ve staging laboratuvarı; gerçek ödeme veya gerçek müşteri verisi yok |
@@ -30,7 +30,38 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 | Yapılandırma | DB_URL, DB_USERNAME, DB_PASSWORD; .gitignore ve .dockerignore ile yerel ortam dosyalarının dışlanması |
 | Karar kayıtları | Mimari karar, domain kuralları ve altyapı planı için docs/adr belgeleri |
 
-Mevcut repo hâlâ Inventory Maven projesi kök düzenindedir; hedef monorepo servis dizinlerine henüz taşınmadı. Kullanıcı adı olarak yerel laboratuvarda PostgreSQL'in bootstrap kullanıcısı kullanılıyor; bu, production için en az yetkili uygulama rolü tasarımı değildir.
+Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. Kök `pom.xml` yalnız toplu build için aggregator'dır; servisler birbirine Maven bağımlılığı eklemez ve kendi Spring Boot parent'larıyla ayrı build edilir. Inventory iş akışları taşındı; Order ve Payment şu an yalnız Web MVC/Validation bağımlılıkları ve uygulama başlangıcından oluşur. Onlara henüz veritabanı, migration, iş endpointi veya RabbitMQ bağlantısı eklenmedi. Kullanıcı adı olarak yerel laboratuvarda PostgreSQL'in bootstrap kullanıcısı kullanılıyor; bu, production için en az yetkili uygulama rolü tasarımı değildir.
+
+### Bağımsız servis iskeletleri
+
+Ana repo klasörünün adı `reserveflow` olarak düzenlendi. IntelliJ'de bu klasörün kök `pom.xml` dosyasını açıp Maven'i yeniden yükle. ReserveFlow bütün sistemin adıdır; Inventory, Order ve Payment onun bağımsız uygulamalarıdır. Ortak Compose, README, Maven Wrapper ve mimari belgeler kökte, uygulama kodları yalnız ilgili servis altında tutulur.
+
+**Mevcut veri için uyumluluk:** Compose proje adı bilinçli olarak `inventory-service` değerinde sabitlendi. Bu eski altyapı kimliği, repo klasörü yeniden adlandırıldığında Docker'ın başka bir named volume açmasını önler; mevcut `inventory-service_postgres_data` kullanılmaya devam eder. Bu ad uygulamaların mimari sınırı değildir. İleride altyapı adları değiştirilirse önce yedekleme ve açık bir veri taşıma işlemi yapılmalıdır; `down -v` kullanılmamalıdır.
+
+| Servis | Yerel port | Durum |
+|---|---:|---|
+| Inventory | 8080 | Ürün, stok rezervasyonu, commit/release ve PostgreSQL |
+| Order | 8081 | Spring Boot iskeleti; henüz sipariş iş mantığı yok |
+| Payment | 8082 | Spring Boot iskeleti; ileride ödeme simülatörü olacak |
+
+```bash
+mvn -DskipTests package
+mvn -f services/inventory-service/pom.xml -DskipTests package
+mvn -f services/order-service/pom.xml test package
+mvn -f services/payment-service/pom.xml test package
+```
+
+İlk komut toplu paketler; sonraki komutlar her servisin kökten bağımsız derlenebildiğini gösterir. Maven Wrapper kökte kalır; Maven kurulu değilse `mvn` yerine kökten `./mvnw` kullanılabilir. `-DskipTests` test çalıştırmaz. IntelliJ'de kök `pom.xml` dosyasını Maven projesi olarak yeniden yükle; Inventory kaynakları artık `services/inventory-service/src` altında. Eski kök `target/` dizini build çıktısıdır, yeni servis build'lerinde kullanılmaz.
+
+Taşıma sonrasında üç bağımsız Maven package ve toplu aggregator package başarılıdır. Inventory'nin seçili 53 testi ve yeni servislerin iki uygulama başlangıç testi geçti: **toplam 55 seçili test**. Inventory'nin eski, harici DB ayarlarına ihtiyaç duyan `InventoryServiceApplicationTests` testi bu seçili koşuma dahil değildir; tam suite başarısı iddia edilmez.
+
+```bash
+mvn -Dtest=ReservationLifecycleTest,InventoryConcurrencyTest,ProductControllerTest,ReservationControllerTest,ProductMapperTest,OrderServiceApplicationTests,PaymentServiceApplicationTests -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
+Son seçenek, listelenen test adlarının bulunmadığı diğer modüllerde Maven'in hata vermemesini sağlar. Her modül için yukarıda listelenen gerçek test sonuçları kontrol edilmiştir.
+
+Üç Docker image'ının build'i ve Compose ile üç uygulamanın birlikte başlaması doğrulandı. Inventory 8080, Order 8081, Payment 8082 portunda HTTP yanıtı verdi; kök `/` adresindeki 404, bu adrese endpoint tanımlanmamasından kaynaklanır ve bir iş akışı testi değildir. Mevcut PostgreSQL container'ı çalışır durumda bırakıldı ve named volume korunarak Inventory yeniden başlatıldı.
 
 ### Docker Compose ile çalıştırma
 
@@ -48,6 +79,7 @@ docker compose logs --tail=80 inventory
 ```
 
 - API: `http://localhost:8080`.
+- Order ve Payment iskeletleri sırasıyla `localhost:8081` ve `localhost:8082` üzerinde başlar. İş endpointleri henüz yoktur; kök URL'de 404 normaldir.
 - Bilgisayardan PostgreSQL: `localhost:5433/inventory_db`.
 - Inventory container'ından PostgreSQL: `postgres:5432/inventory_db`; container içinde `localhost` veritabanını göstermez.
 - Aynı anda IntelliJ uygulamasını 8080 portunda çalıştırma.
@@ -117,7 +149,7 @@ Hatalar `application/problem+json` gövdesinde `status`, `title`, `detail`, `ins
 ### Doğrulama
 
 ```text
-mvn -Dtest=ProductControllerTest,ReservationControllerTest,ProductMapperTest test
+mvn -f services/inventory-service/pom.xml -Dtest=ProductControllerTest,ReservationControllerTest,ProductMapperTest test
 ```
 
 **Otomatik doğrulama:** Seçili 31 test geçti: 12 ürün controller, 17 rezervasyon controller ve 2 ürün mapper testi. Controller testlerinde gerçek MVC yönlendirme, JSON dönüşümü ve validation, service yerine test double kullanılır. Mapper testleri derlemede üretilen implementasyonu kullanır. Bu komut tüm test suite'ini veya uygulama context testini çalıştırmaz; bağımlılıklar cache'deyse `-o` eklenebilir.
@@ -134,7 +166,7 @@ mvn -Dtest=ProductControllerTest,ReservationControllerTest,ProductMapperTest tes
 ### PostgreSQL üzerinde eşzamanlı rezervasyon testi
 
 ```bash
-mvn -Dtest=InventoryConcurrencyTest test
+mvn -f services/inventory-service/pom.xml -Dtest=InventoryConcurrencyTest test
 ```
 
 Docker çalışıyor olmalıdır. Testcontainers, Compose ortamından bağımsız, rastgele host portlu geçici bir PostgreSQL 17 container'ı açar. Test datasource ayarları bu container'a yönlendirilir; geliştirme veritabanı ve volume'u kullanılmaz. Şema gerçek Flyway migration'ıyla hazırlanır. Container test sınıfı tamamlandığında kapatılır.
@@ -167,7 +199,7 @@ Aynı tamamlanmış işlem tekrarlanırsa mevcut rezervasyon döner ve stok tekr
 Geçersiz UUID 400, bulunamayan rezervasyon ve çelişkili durum geçişleri mevcut ortak hata yönetimi nedeniyle 400 / INVALID_RESERVATION döner. Hedef mimarideki daha özel 404/409 business hata ayrımı henüz uygulanmadı. Stok tutarsızlığı IllegalStateException ile işlemi durdurur ve genel 500 yanıtına gider.
 
 ```bash
-mvn -Dtest=ReservationLifecycleTest,InventoryConcurrencyTest,ProductControllerTest,ReservationControllerTest,ProductMapperTest test
+mvn -f services/inventory-service/pom.xml -Dtest=ReservationLifecycleTest,InventoryConcurrencyTest,ProductControllerTest,ReservationControllerTest,ProductMapperTest test
 ```
 
 **Son seçili koşum: 53 test başarılı.** Bunların 10'u gerçek PostgreSQL kullanan yaşam döngüsü testleridir: commit/release stok hesapları, ardışık tekrarlar, ters geçişlerin reddi, eksik/null siparişler ve 5 tekrarlı eşzamanlı commit/release yarışı. Ayrıca lifecycle HTTP yolları, UUID dönüşümü ve business hataları için 6 controller testi eklendi. Yarışta yalnız bir geçişin başarılı olduğu ve kalıcı stok değerlerinin kazanan durumla tutarlı olduğu kontrol edildi; bütün olası zamanlamalar veya yüksek yük kanıtlanmış değildir. Yeni endpointler için Docker/Postman manuel doğrulaması henüz yapılmadı.
@@ -1082,7 +1114,22 @@ Her alarm için `docs/runbooks/` altında belirti, komutlar, teşhis, kurtarma v
 
 ## 15. Repository yapısı
 
-Aşağıdaki ağaç hedef monorepo yapısıdır. Mevcut repository kökü henüz Inventory Service'in Maven projesidir; `pom.xml`, `src/` ve Maven Wrapper burada bulunur. `src/main/java/com/aydog4nn/reserveflow/inventory/domain/` altında Product, Stock, Reservation ve ReservationStatus vardır. Servis klasörlerine taşıma diğer servisler eklenirken yapılacaktır.
+Mevcut yapı aşağıdadır. Her serviste kendi `pom.xml`, `src/`, `Dockerfile` ve `.dockerignore` dosyası bulunur. Kökteki Compose dosyası her image'ı kendi servis dizininden build eder. Mevcut PostgreSQL servis/volume adı korunmuştur; bu taşıma veritabanını silmez veya yeniden oluşturmaz.
+
+```text
+reserveflow/
+├── pom.xml
+├── mvnw / mvnw.cmd / .mvn/
+├── compose.yaml
+├── README.md
+├── services/
+│   ├── inventory-service/
+│   ├── order-service/
+│   └── payment-service/
+└── docs/adr/
+```
+
+Aşağıdaki genişletilmiş ağaç ise hedef yapıdır; contracts, infra, deploy, ci, monitoring ve tests dizinleri henüz uygulanmış değildir.
 
 ```text
 reserveflow/
@@ -1090,7 +1137,7 @@ reserveflow/
 ├── services/
 │   ├── order-service/
 │   ├── inventory-service/
-│   └── payment-simulator/
+│   └── payment-service/
 ├── contracts/
 │   ├── commands/
 │   ├── events/
@@ -1138,7 +1185,7 @@ infrastructure/      JPA, AMQP, inbox/outbox, configuration
 
 ### Çalıştırma belgeleri
 
-Inventory Service modeli Java 21 ile `mvn -o -DskipTests compile` kullanılarak derlenmiştir. Veritabanı bağlantısı ve uygulama runtime henüz doğrulanmamıştır. Docker Compose, çok servisli Maven yapısı veya deployment scriptleri henüz bulunmadığı için bunlara ait çalıştırma komutları verilmez. İlk milestone'da README'ye doğrulanmış şu bölümler eklenecektir:
+Güncel Maven ve Compose komutları README'nin başındaki mevcut durum bölümündedir. Inventory'nin PostgreSQL bağlantısı ve iş akışları doğrulandı. Üç servis dizini ve kök Maven aggregator eklendi. Servisler arası iletişim, Order/Payment veri katmanları ve production deployment henüz yoktur. Altyapı aşamalarına gelindikçe aşağıdaki başlıklar genişletilecektir:
 
 1. Gereksinimler ve sabitlenmiş sürümler.
 2. `.env.example` alanları ve yerel secret hazırlığı.

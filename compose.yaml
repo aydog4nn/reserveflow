@@ -1,3 +1,5 @@
+name: inventory-service
+
 services:
   postgres:
     image: postgres:17
@@ -18,7 +20,7 @@ services:
 
   inventory:
     build:
-      context: .
+      context: ./services/inventory-service
     image: reserveflow-inventory:local
     ports:
       - "127.0.0.1:8080:8080"
@@ -30,6 +32,20 @@ services:
       postgres:
         condition: service_healthy
 
+
+  order:
+    build:
+      context: ./services/order-service
+    image: reserveflow-order:local
+    ports:
+      - "127.0.0.1:8081:8081"
+
+  payment:
+    build:
+      context: ./services/payment-service
+    image: reserveflow-payment:local
+    ports:
+      - "127.0.0.1:8082:8082"
 
 volumes:
   postgres_data:
