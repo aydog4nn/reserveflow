@@ -30,7 +30,7 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 | Yapılandırma | DB_URL, DB_USERNAME, DB_PASSWORD; .gitignore ve .dockerignore ile yerel ortam dosyalarının dışlanması |
 | Karar kayıtları | Mimari karar, domain kuralları ve altyapı planı için docs/adr belgeleri |
 
-Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. Kök `pom.xml` yalnız toplu build için aggregator'dır; servisler birbirine Maven bağımlılığı eklemez ve kendi Spring Boot parent'larıyla ayrı build edilir. Inventory iş akışları hazırdır. Order'ın veri altyapısı ve temel sipariş oluşturma service'i hazır; henüz Order HTTP endpointi, HTTP idempotency veya RabbitMQ/outbox bağlantısı yoktur. Payment'ın DB/Flyway bağlantısı hazır, domain modeli ve tablo migration'ı henüz yoktur.
+Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. Kök `pom.xml` yalnız toplu build için aggregator'dır; servisler birbirine Maven bağımlılığı eklemez ve kendi Spring Boot parent'larıyla ayrı build edilir. Inventory iş akışları hazırdır. Order'ın veri altyapısı, sipariş oluşturma service'i ve tek istemcili lab kapsamında HTTP idempotency endpoint'i hazırdır; RabbitMQ/outbox bağlantısı yoktur. Payment'ın DB/Flyway bağlantısı hazır, domain modeli ve tablo migration'ı henüz yoktur.
 
 ### Order veri altyapısı — 19 Ekim 2026
 
@@ -46,7 +46,27 @@ Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. K�
 mvn -f services/order-service/pom.xml test
 ```
 
-Öğrencinin yazdığı service akışı private yardımcı metotlara ayrılarak tamamlandı. Controller, idempotency ve outbox sonraki adımlarda eklenecek. Şu an `POST /api/v1/orders` endpointi açık değildir.
+Öğrencinin yazdığı service akışı private yardımcı metotlara ayrılarak tamamlandı. Controller ve service idempotency bağlantısı hazırdır; outbox sonraki adımdır.
+
+### Order HTTP API — 19 Ekim 2026
+
+- `POST http://localhost:8081/api/v1/orders`, JSON gövdesi ve zorunlu `Idempotency-Key` header'ı alır. Anahtar boş olamaz, en fazla 128 karakterdir; değiştirilmeden service'e aktarılır.
+- Başarılı yeni istek ve tekrar istek `200 OK` ile OrderResponse döndürür. Bu sözleşme kalıcı sipariş oluşturma sonucudur; henüz saga/outbox başlamadığından `202 Accepted` veya ödeme tamamlandı iddiası yoktur.
+- İstemci kapsamı sunucudaki `ORDER_CLIENT_ID` ayarından gelir (varsayılan `local-lab`). Bu tek istemcili yerel laboratuvar içindir; kimlik doğrulama değildir. İstemciden gelen bir client-ID header'ına güvenilmez. Gerçek çok kullanıcılı kullanım için doğrulanmış kullanıcı kimliği bağlanmalıdır.
+- Geçersiz istek/header: 400; bulunamayan ürün: 404; aynı anahtar/farklı içerik: 409; Inventory veya geçici DB erişim hatası: 503; beklenmeyen hata: ayrıntıları gizleyen 500. Hatalar ProblemDetail biçimindedir.
+- Controller testleri HTTP sözleşmesini stub service ile doğrular; service/DB idempotency testleri ayrı kapsamdadır. Docker image bu değişiklikten sonra henüz yeniden oluşturulmadı; gerçek Postman denemesi sonraki adımdır.
+
+Postman: POST, Content-Type: application/json, Idempotency-Key: order-demo-001.
+
+```json
+{
+  "productId": "22222222-2222-4222-8222-222222222222",
+  "quantity": 3,
+  "paymentScenario": "SUCCESS"
+}
+```
+
+Ürün kimliği Inventory'de mevcut olmalıdır. Aynı gövde ve anahtarla tekrar gönderildiğinde aynı orderId dönmelidir; quantity değiştirildiğinde 409 beklenir. Yeni sipariş için yeni anahtar kullanılır.
 
 ### Tekrarlı istek koruması: veri altyapısı
 
@@ -67,7 +87,7 @@ Bu özet şifreleme, parola saklama veya kimlik doğrulama mekanizması değildi
 olarak tanımlıdır: elle atanmış composite ID'nin JPA tarafından merge
 edilip eski sipariş/özetin sessizce değiştirilmesi önlenir. Aynı müşteri
 ve anahtarı ikinci kez insert etmek DB constraint hatası verir.
-Bu hatadan sonra eski siparişe dönme veya içerik çakışması kararı service'e bağlandı; HTTP 409 eşlemesi controller ile birlikte eklenecek.
+Bu hatadan sonra eski siparişe dönme veya içerik çakışması kararı service'e bağlandı; HTTP 409 eşlemesi controller ile eklendi.
 
 ```bash
 mvn -f services/order-service/pom.xml -Dtest=OrderRequestFingerprintTest,RequestIdempotencyIntegrationTest test
@@ -78,8 +98,8 @@ composite kimlik eşitliği, kayıt/okuma, duplicate insert'in eski kaydı
 ezmemesi, farklı müşterilerin aynı anahtarı kullanması ve olmayan
 siparişe FK kontrolünü kapsar. Sipariş ve anahtarın atomik kaydı,
 yarışta kaybedenin rollback'i ve eşzamanlı replay için service testleri
-de eklendi. HTTP header/controller davranışı ve client kimliğinin
-güvenilir kaynaktan elde edilmesi henüz bağlanmadı.
+de eklendi. HTTP header/controller bağlantısı hazır; istemci kimliği şimdilik
+tek istemcili lab ayarıdır, doğrulanmış kullanıcı kimliği henüz yoktur.
 
 **Durum:** Service düzeyinde tekrar koruması uygulanmıştır. Tek sözleşme
 createOrder(request, clientId, idempotencyKey) olarak bırakıldı; anahtarsız
@@ -87,7 +107,7 @@ eski metot kaldırıldı. İstek ve metadata doğrulanır, özet hesaplanır ve
 kayıt Inventory çağrısından önce aranır. Aynı özet varsa mevcut sipariş
 döner; farklıysa IdempotencyConflictException fırlatılır. Replay'de
 Inventory kapalı veya ürün fiyatı değişmiş olsa da eski fiyat snapshot'ı
-korunur. HTTP endpointi ve güvenilir müşteri kimliği hâlâ yoktur.
+korunur. HTTP endpointi hazırdır; doğrulanmış müşteri kimliği henüz yoktur.
 
 Yeni istekte sipariş ve request_idempotency kaydı aynı transaction içinde
 saveAndFlush ile yazılır. Flush, commit değildir; anahtar kaydı başarısızsa
