@@ -14,6 +14,42 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 > Aşağıdaki mevcut durum bölümü uygulanmış işleri, numaralı mimari bölümleri ise büyük ölçüde hedef tasarımı anlatır. Hedef diyagramlar ve 30 aşamalı plan bir tamamlanma beyanı değildir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
 
+### Payment model ve veri altyapısı — 19 Ekim 2026
+
+- CreatePaymentRequest (orderId, amount, currency, scenario), PaymentResponse, MapStruct 1.6.3 PaymentMapper ve IPaymentService sözleşmesi hazırdır. Controller @Valid ile DTO kurallarını uygular; doğrudan service çağrısında giriş validation henüz bağlı değildir. Mapper yalnız entity'yi response'a çevirir; service yeni Payment oluşturur. status/id/zaman alanları istemciden alınmaz.
+
+- Payment entity, PaymentScenario/PaymentStatus enum'ları, PaymentRepository ve V1 payments migration'ı eklendi.
+- Entity PENDING başlar. Service SUCCESS için SUCCEEDED, DECLINE için FAILED sonucu kaydeder; DELAY için 10 saniye sonrası readyAt atanır. TECHNICAL_FAILURE, PaymentTechnicalException ile teknik arıza taklit eder; transaction geri alınır ve yeni ödeme kaydı oluşmaz. Kalıcı PENDING teknik hata kaydı veya otomatik retry henüz yoktur.
+- orderId yalnız UUID'dir; Order entity bağımlılığı veya servisler arası foreign key yoktur. Bir sipariş için tek ödeme kaydı DB unique constraint ile korunur. Ardışık tekrar aynı içerikte mevcut ödemeyi döndürür; farklı tutar/para birimi/senaryoda PaymentConflictException ve HTTP 409 verir. Tutar compareTo ile karşılaştırılır. Eş zamanlı ilk istek yarışında mevcut kayda dönme henüz uygulanmadı.
+- amount için BigDecimal/NUMERIC(19,2), sıfır dahil negatif olmayan tutar ve üç büyük harfli currency kullanılır. Sıfır tutar Inventory/Order fiyat sözleşmesiyle uyumludur.
+- completeDuePayments, zamanı gelmiş PENDING/DELAY kayıtlarını readyAt sırasıyla en fazla 100 adet seçip SUCCEEDED yapar. Transaction içindeki değişiklikler JPA tarafından kaydedilir; thread uyutulmaz.
+- PaymentScheduler kontrol bittikten bir saniye sonra yeniden service'i çağırır. Varsayılan açıktır; payment.scheduling.enabled=false ile kontrollü testlerde kapatılır. version çakışan güncellemeleri saptar; çoklu worker koordinasyonu, teknik hata retry ve event/outbox yayını henüz yoktur.
+- PostgreSQL/Testcontainers testleri migration/JPA uyumu, kayıt/okuma, benzersiz orderId, DB kısıtları, validation ve gecikme metadata'sı/version güncellemesini kapsar.
+- Bu aşamada yerel Compose Payment image'ı yeniden build edilmedi; mevcut geliştirme DB'sine veri yazılmadı.
+
+Service testlerinde gerçek PostgreSQL kullanılır; readyAt geçmişe/geleceğe kontrollü ayarlanarak beklemeden önce PENDING, zamanı gelince SUCCEEDED ve tekrar taramada sıfır değişiklik doğrulanır. Scheduler'ın otomatik çağrısı ayrı, DB'siz Spring scheduling testiyle doğrulanır; bu iki test birlikte gerçek zamanlı PostgreSQL scheduler uçtan uca testi olarak sunulmaz.
+
+### Payment HTTP API — yerel test sözleşmesi
+
+- POST http://localhost:8082/api/v1/payments: aşağıdaki JSON ile yeni simülasyon veya ardışık tekrar için 200 OK/PaymentResponse döner. SUCCESS sonucu SUCCEEDED, DECLINE sonucu FAILED, DELAY sonucu PENDING olur. Reddedilen ödeme HTTP hatası değildir.
+- GET http://localhost:8082/api/v1/payments/{paymentId}: ödeme durumunu döndürür. Path değeri POST response'undaki paymentId'dir, orderId değildir.
+- Hatalar ProblemDetail biçimindedir: geçersiz body/alanlar 400; eksik ödeme 404/PAYMENT_NOT_FOUND; mevcut siparişle çelişki 409/PAYMENT_CONFLICT; teknik arıza simülasyonu 503/PAYMENT_TECHNICAL_FAILURE; geçici DB erişim sorunu 503/SERVICE_UNAVAILABLE; beklenmeyen hata ayrıntıları gizlenerek 500.
+- TECHNICAL_FAILURE yeni kayıt oluşturmaz; otomatik retry yoktur. Eş zamanlı ilk istekte unique constraint yarışı henüz replay'e çevrilmez; genel 500 dönebilir. Ardışık tekrar davranışı eş zamanlı işlem garantisi olarak sunulmaz.
+- Endpoint'ler yalnız localhost'a bağlı lab/test arayüzüdür: authentication/authorization yoktur, sipariş varlığı ve tutarı Order'dan doğrulanmaz; gerçek para veya production ödeme API'si değildir. Order bu endpoint'leri henüz çağırmaz.
+
+```json
+{
+  "orderId": "11111111-1111-4111-8111-111111111111",
+  "amount": 4500.00,
+  "currency": "TRY",
+  "scenario": "DELAY"
+}
+```
+
+Postman'da Content-Type: application/json kullanılır. Her yeni senaryo için yeni orderId seçilir; aynı orderId'nin scenario değerini değiştirmek 409 üretir. DELAY POST yanıtında PENDING, yaklaşık 10 saniye ve sonraki scheduler kontrolünden sonra GET yanıtında SUCCEEDED beklenir.
+
+Yerel deneme öncesi proje kökünde `docker compose up -d --build payment` çalıştırılır. Bu API değişikliği sonrasında image henüz yeniden oluşturulmadı; otomatik testler geliştirme DB'sinden ayrı veritabanlarında çalışır.
+
 ## Mevcut durum — 15 Ekim 2026
 
 ### Tamamlanan işler
