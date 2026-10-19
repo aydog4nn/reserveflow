@@ -6,7 +6,7 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 | Bilgi | Durum |
 |---|---|
-| Belge tarihi | 15 Ekim 2026 |
+| Belge tarihi | 19 Ekim 2026 |
 | Proje aşaması | Inventory iş akışları hazır; Order ve Payment bağımsız uygulama iskeletleri eklendi; servis iletişimi ve CI/CD planlandı |
 | İlk çalışma dönemi | 30 gün; günlük yaklaşık 5–6 saat varsayımı |
 | Ana hedef | Backend/mikroservis kararları ile DevOps operasyonlarını aynı çalışan sistemde göstermek |
@@ -30,7 +30,54 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 | Yapılandırma | DB_URL, DB_USERNAME, DB_PASSWORD; .gitignore ve .dockerignore ile yerel ortam dosyalarının dışlanması |
 | Karar kayıtları | Mimari karar, domain kuralları ve altyapı planı için docs/adr belgeleri |
 
-Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. Kök `pom.xml` yalnız toplu build için aggregator'dır; servisler birbirine Maven bağımlılığı eklemez ve kendi Spring Boot parent'larıyla ayrı build edilir. Inventory iş akışları taşındı; Order ve Payment şu an yalnız Web MVC/Validation bağımlılıkları ve uygulama başlangıcından oluşur. Onlara henüz veritabanı, migration, iş endpointi veya RabbitMQ bağlantısı eklenmedi. Kullanıcı adı olarak yerel laboratuvarda PostgreSQL'in bootstrap kullanıcısı kullanılıyor; bu, production için en az yetkili uygulama rolü tasarımı değildir.
+Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. Kök `pom.xml` yalnız toplu build için aggregator'dır; servisler birbirine Maven bağımlılığı eklemez ve kendi Spring Boot parent'larıyla ayrı build edilir. Inventory iş akışları hazırdır. Order'ın entity/repository/DTO/mapper ve ilk migration altyapısı eklendi; henüz Order service iş mantığı, HTTP endpointi veya RabbitMQ bağlantısı yoktur. Payment'ın DB/Flyway bağlantısı hazır, domain modeli ve tablo migration'ı henüz yoktur.
+
+### Order veri altyapısı — 19 Ekim 2026
+
+- `Order` ve `orders` tablosu: ürün UUID'si, miktar, birim fiyat ve toplam tutar snapshot'ı, para birimi, ödeme senaryosu, sipariş durumu, opsiyonel rezervasyon/ödeme kimlikleri, hata nedeni, optimistic version ve zamanlar.
+- `productId`, `reservationId`, `paymentId` yalnız UUID'dir; Inventory/Payment entity importu veya servisler arası foreign key yoktur.
+- Durum isimleri hedef saga modeline uygundur. Yeni entity `PENDING_STOCK` başlar; bu, henüz bir ReserveStock mesajının yayınlandığı anlamına gelmez. Geçiş kuralları ve saga koordinasyonu uygulanmadı.
+- `CreateOrderRequest` yalnız productId, quantity ve paymentScenario taşır. Fiyat/totalAmount istemciden alınmaz; gelecekte service Inventory'den fiyat okuyup toplamı hesaplayacaktır. Inventory fiyat okuma endpointi ve HTTP client henüz bağlanmadı.
+- `OrderResponse`, MapStruct `OrderMapper` ve `OrderRepository` hazırdır. Eşlenmeyen response alanı derleme hatasıdır.
+- `V1__create_orders_table.sql`, tabloyu ve status/updated_at indeksini oluşturur. Miktar pozitif, fiyatlar negatif olmayan, toplam miktar × birim fiyat ile tutarlı olmalıdır. Enum üyeliği ve para birimi formatı DB kısıtlarıyla korunur; izinli durum geçişleri henüz service'te uygulanmadı.
+- Beş Order PostgreSQL testi: uygulama başlangıcı/Flyway/JPA validate, kalıcı kayıt/mapper/fiyat alanları, yanlış toplamın DB'de reddi, request validation ve version/zaman güncellemesi. Bunlar sipariş iş akışı testi değildir.
+
+```bash
+mvn -f services/order-service/pom.xml test
+```
+
+Service iş mantığı öğrenci tarafından yazılacak; controller, HTTP client, idempotency ve outbox sonraki adımlarda eklenecek. Şu an `POST /api/v1/orders` endpointi açık değildir.
+
+Order altyapısı sonrası son seçili regresyon koşumu **60 test** ile başarılıdır: 54 Inventory, 5 Order ve 1 Payment testi. Tam suite koşumu iddia edilmez; eski harici DB context testi seçili liste dışındadır.
+
+Order Docker image'ı yeniden oluşturulup başlatıldı; yerel order_db'de V1 migration'ın başarılı olduğu, orders ve flyway_schema_history tablolarının order_app sahibinde bulunduğu doğrulandı. orders tablosu boştur; test siparişleri yalnız izole Testcontainers ortamında oluşturulmuştur.
+
+### Servis bazlı veritabanı ayrımı — 19 Ekim 2026
+
+| Uygulama | Veritabanı | Rol |
+|---|---|---|
+| Inventory | inventory_db | inventory_app |
+| Order | order_db | order_app |
+| Payment | payment_db | payment_app |
+
+Uygulamalar artık `postgres` yöneticisini kullanmaz. `db-setup` işi eksik rol/DB'leri oluşturur, mevcut Inventory verisini silmeden tablo sahipliğini servis rolüne aktarır ve diğer servis DB'lerine CONNECT erişimini kapatır. PUBLIC'ın varsayılan bağlantı hakkı da kaldırılır. Uygulamalar bu iş başarıyla bitmeden başlamaz.
+
+Bu, lab düzeyinde servis verisi ve yetki ayrımıdır: Roller kendi DB/şemalarının sahibidir; Flyway ve runtime aynı rolü kullanır. Production'daki ayrı migration rolü ve daha kısıtlı runtime yetkileri henüz uygulanmadı. Yöneticinin erişimi ve varsayılan yönetim DB'lerinin politikası değiştirilmez.
+
+[Kurulum, yedekleme, erişim kontrolü ve güvenlik sınırları](docs/runbooks/service-databases.md).
+
+Kurulumun izole Testcontainers testi başarılıdır: Aynı kurulum iki kez uygulanmış, mevcut tablo/veri korunmuş ve 3 başarılı / 6 reddedilen bağlantı doğrulanmıştır. Yerel mevcut volume üzerinde de aynı erişim matrisi doğrulandı; Inventory'nin ürün, stok, rezervasyon ve Flyway geçmişi verilerinin geçiş öncesi/sonrası parmak izleri eşleşti. Yedek `backups/inventory-before-service-databases.dump` dosyasında Git dışında tutulur; restore tatbikatı henüz yapılmadı.
+
+Bu aşamada **56 seçili otomatik test** başarılıdır: önceki 53 Inventory testi, 1 provisioning testi ve 2 veritabanı bağlantılı Order/Payment başlangıç testi. Bu, eski harici-DB context testi dahil tam suite koşumu değildir.
+
+```bash
+mvn -Dtest=DatabaseProvisioningTest,ReservationLifecycleTest,InventoryConcurrencyTest,ProductControllerTest,ReservationControllerTest,ProductMapperTest,OrderServiceApplicationTests,PaymentServiceApplicationTests -Dsurefire.failIfNoSpecifiedTests=false test
+docker compose run --rm --entrypoint /bin/sh db-setup /provision/verify-access.sh
+```
+
+`db-setup` sürekli çalışan bir servis değildir; başarıyla tamamlandığında `Exited (0)` görünmesi normaldir.
+
+Üç image yeniden build edildi ve uygulamalar Docker'da başladı. PostgreSQL'in canlı bağlantı tablosunda `inventory_app → inventory_db`, `order_app → order_db`, `payment_app → payment_db` eşleşmeleri doğrulandı. Uygulamalar açıldıktan sonra da Inventory verilerinin parmak izleri aynı kaldı. 8080/8081/8082 portları HTTP yanıtı verdi; kök URL'deki 404 yalnız endpoint tanımlanmamasını gösterir, yeni bir iş akışı testi değildir.
 
 ### Bağımsız servis iskeletleri
 
@@ -65,10 +112,13 @@ Son seçenek, listelenen test adlarının bulunmadığı diğer modüllerde Mave
 
 ### Docker Compose ile çalıştırma
 
-Gereksinimler: çalışan Docker Engine ve Docker Compose. Proje kökünde Git'e eklenmeyen bir `.env` dosyasında `DB_PASSWORD` tanımla:
+Gereksinimler: çalışan Docker Engine ve Docker Compose. Proje kökünde Git'e eklenmeyen bir `.env` dosyasında dört ayrı, boş olmayan parola tanımla. Mevcut volume varsa yönetici DB_PASSWORD değerini değiştirme:
 
 ```dotenv
 DB_PASSWORD=yerel_guclu_parolanizi_buraya_yazin
+INVENTORY_DB_PASSWORD=ayri_inventory_parolasi
+ORDER_DB_PASSWORD=ayri_order_parolasi
+PAYMENT_DB_PASSWORD=ayri_payment_parolasi
 ```
 
 ```bash
@@ -83,7 +133,7 @@ docker compose logs --tail=80 inventory
 - Bilgisayardan PostgreSQL: `localhost:5433/inventory_db`.
 - Inventory container'ından PostgreSQL: `postgres:5432/inventory_db`; container içinde `localhost` veritabanını göstermez.
 - Aynı anda IntelliJ uygulamasını 8080 portunda çalıştırma.
-- Compose, PostgreSQL sağlıklı olunca Inventory'yi başlatır. Healthcheck migration veya iş akışı testi değildir; sonradan oluşan kesintileri çözmez.
+- Compose sırası PostgreSQL healthy → db-setup başarılı → uygulamalardır. Healthcheck migration veya iş akışı testi değildir; sonradan oluşan kesintileri çözmez.
 - Flyway tabloları oluşturur; Hibernate `ddl-auto=validate` ile entity/şema uyumunu kontrol eder.
 - Kod değişince `docker compose up -d --build inventory` ile image ve container'ı güncelle.
 - `docker compose down` named volume'u korur. **`docker compose down -v` veritabanı volume'unu ve verilerini siler.**

@@ -3,7 +3,10 @@
 ## Durum
 Kabul edildi. Inventory iş akışları uygulanmıştır; Order ve Payment
 uygulama iskeletleri oluşturulmuştur. Servisler arası iletişim ve
-Order/Payment veritabanları henüz uygulanmamıştır.
+Her servisin ayrı veritabanı ve uygulama rolü hazırlanmıştır.
+Order'ın ilk domain tablosu ve veri altyapısı hazırlanmıştır.
+Order iş akışı, Payment domain tabloları ve servisler arası iletişim
+henüz yoktur.
 
 ## Bağlam
 ReserveFlow ile stok rezervasyonu üzerinden backend geliştirme,

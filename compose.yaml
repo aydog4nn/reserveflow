@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: inventory_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Yonetici DB_PASSWORD gerekli}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
@@ -18,6 +18,23 @@ services:
       retries: 10
       start_period: 10s
 
+  db-setup:
+    image: postgres:17
+    entrypoint: ["/bin/sh", "/provision/provision.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${DB_PASSWORD:?Yonetici DB_PASSWORD gerekli}
+      INVENTORY_DB_PASSWORD: ${INVENTORY_DB_PASSWORD:?Inventory parolasi gerekli}
+      ORDER_DB_PASSWORD: ${ORDER_DB_PASSWORD:?Order parolasi gerekli}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Payment parolasi gerekli}
+    volumes:
+      - ./infra/postgres:/provision:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   inventory:
     build:
       context: ./services/inventory-service
@@ -26,11 +43,13 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/inventory_db
-      DB_USERNAME: postgres
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USERNAME: inventory_app
+      DB_PASSWORD: ${INVENTORY_DB_PASSWORD:?Inventory parolasi gerekli}
     depends_on:
       postgres:
         condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
 
 
   order:
@@ -39,6 +58,13 @@ services:
     image: reserveflow-order:local
     ports:
       - "127.0.0.1:8081:8081"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/order_db
+      DB_USERNAME: order_app
+      DB_PASSWORD: ${ORDER_DB_PASSWORD:?Order parolasi gerekli}
+    depends_on:
+      db-setup:
+        condition: service_completed_successfully
 
   payment:
     build:
@@ -46,6 +72,13 @@ services:
     image: reserveflow-payment:local
     ports:
       - "127.0.0.1:8082:8082"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/payment_db
+      DB_USERNAME: payment_app
+      DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Payment parolasi gerekli}
+    depends_on:
+      db-setup:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:
