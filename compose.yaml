@@ -60,6 +60,7 @@ services:
       - "127.0.0.1:8081:8081"
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/order_db
+      INVENTORY_BASE_URL: http://inventory:8080
       DB_USERNAME: order_app
       DB_PASSWORD: ${ORDER_DB_PASSWORD:?Order parolasi gerekli}
     depends_on:

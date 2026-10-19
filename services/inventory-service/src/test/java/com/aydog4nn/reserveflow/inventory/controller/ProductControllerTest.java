@@ -3,6 +3,7 @@ package com.aydog4nn.reserveflow.inventory.controller;
 import com.aydog4nn.reserveflow.inventory.dto.request.CreateProductRequest;
 import com.aydog4nn.reserveflow.inventory.dto.response.ProductResponse;
 import com.aydog4nn.reserveflow.inventory.exception.ApiExceptionHandler;
+import com.aydog4nn.reserveflow.inventory.exception.ProductNotFoundException;
 import com.aydog4nn.reserveflow.inventory.service.abs.IProductService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,8 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -123,7 +126,63 @@ class ProductControllerTest {
                 .andExpect(jsonPath("$.code").value("DATA_CONFLICT"));
     }
 
+    @Test
+    void returnsProductAndStockById() throws Exception {
+        mockMvc.perform(get("/api/v1/products/{id}", PRODUCT_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(PRODUCT_ID.toString()))
+                .andExpect(jsonPath("$.sku").value("DEMO-001"))
+                .andExpect(jsonPath("$.unitPrice").value(1500.0))
+                .andExpect(jsonPath("$.active").value(true))
+                .andExpect(jsonPath("$.onHand").value(10))
+                .andExpect(jsonPath("$.reserved").value(3))
+                .andExpect(jsonPath("$.available").value(7))
+                .andExpect(jsonPath("$.product").doesNotExist());
+        assertEquals(PRODUCT_ID, productService.lastReadId);
+        assertEquals(1, productService.invocationCount);
+    }
+
+    @Test
+    void returnsNotFoundForMissingProduct() throws Exception {
+        productService.failure = new ProductNotFoundException(PRODUCT_ID);
+        mockMvc.perform(get("/api/v1/products/{id}", PRODUCT_ID))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("PRODUCT_NOT_FOUND"));
+    }
+
+    @Test
+    void rejectsInvalidProductIdBeforeCallingService() throws Exception {
+        mockMvc.perform(get("/api/v1/products/not-a-uuid"))
+                .andExpect(status().isBadRequest());
+        assertEquals(0, productService.invocationCount);
+    }
+
+    @Test
+    void returnsGenericServerErrorForMissingStock() throws Exception {
+        productService.failure = new IllegalStateException("Private invariant details");
+        mockMvc.perform(get("/api/v1/products/{id}", PRODUCT_ID))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+                .andExpect(jsonPath("$.detail").value("İşlem sırasında beklenmeyen bir hata oluştu."));
+    }
+
     private static class StubProductService implements IProductService {
+
+        @Override
+        public ProductResponse getProductById(UUID productId) {
+            invocationCount++;
+            lastReadId = productId;
+            if (failure != null) {
+                throw failure;
+            }
+            return new ProductResponse(
+                    productId, "DEMO-001", "Keyboard", new BigDecimal("1500.00"),
+                    "TRY", true, 10, 3, 7
+            );
+        }
+
+        private UUID lastReadId;
 
         private CreateProductRequest lastRequest;
         private int invocationCount;
