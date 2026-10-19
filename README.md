@@ -30,14 +30,14 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 | Yapılandırma | DB_URL, DB_USERNAME, DB_PASSWORD; .gitignore ve .dockerignore ile yerel ortam dosyalarının dışlanması |
 | Karar kayıtları | Mimari karar, domain kuralları ve altyapı planı için docs/adr belgeleri |
 
-Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. Kök `pom.xml` yalnız toplu build için aggregator'dır; servisler birbirine Maven bağımlılığı eklemez ve kendi Spring Boot parent'larıyla ayrı build edilir. Inventory iş akışları hazırdır. Order'ın entity/repository/DTO/mapper ve ilk migration altyapısı eklendi; henüz Order service iş mantığı, HTTP endpointi veya RabbitMQ bağlantısı yoktur. Payment'ın DB/Flyway bağlantısı hazır, domain modeli ve tablo migration'ı henüz yoktur.
+Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. Kök `pom.xml` yalnız toplu build için aggregator'dır; servisler birbirine Maven bağımlılığı eklemez ve kendi Spring Boot parent'larıyla ayrı build edilir. Inventory iş akışları hazırdır. Order'ın veri altyapısı ve temel sipariş oluşturma service'i hazır; henüz Order HTTP endpointi, HTTP idempotency veya RabbitMQ/outbox bağlantısı yoktur. Payment'ın DB/Flyway bağlantısı hazır, domain modeli ve tablo migration'ı henüz yoktur.
 
 ### Order veri altyapısı — 19 Ekim 2026
 
 - `Order` ve `orders` tablosu: ürün UUID'si, miktar, birim fiyat ve toplam tutar snapshot'ı, para birimi, ödeme senaryosu, sipariş durumu, opsiyonel rezervasyon/ödeme kimlikleri, hata nedeni, optimistic version ve zamanlar.
 - `productId`, `reservationId`, `paymentId` yalnız UUID'dir; Inventory/Payment entity importu veya servisler arası foreign key yoktur.
 - Durum isimleri hedef saga modeline uygundur. Yeni entity `PENDING_STOCK` başlar; bu, henüz bir ReserveStock mesajının yayınlandığı anlamına gelmez. Geçiş kuralları ve saga koordinasyonu uygulanmadı.
-- `CreateOrderRequest` yalnız productId, quantity ve paymentScenario taşır. Fiyat/totalAmount istemciden alınmaz; gelecekte service Inventory'den fiyat okuyup toplamı hesaplayacaktır. Inventory fiyat okuma endpointi ve HTTP client henüz bağlanmadı.
+- `CreateOrderRequest` yalnız productId, quantity ve paymentScenario taşır. Fiyat/totalAmount istemciden alınmaz; service InventoryClient ile fiyatı alır, aktifliği kontrol eder, toplamı hesaplar ve snapshot'ı kaydeder.
 - `OrderResponse`, MapStruct `OrderMapper` ve `OrderRepository` hazırdır. Eşlenmeyen response alanı derleme hatasıdır.
 - `V1__create_orders_table.sql`, tabloyu ve status/updated_at indeksini oluşturur. Miktar pozitif, fiyatlar negatif olmayan, toplam miktar × birim fiyat ile tutarlı olmalıdır. Enum üyeliği ve para birimi formatı DB kısıtlarıyla korunur; izinli durum geçişleri henüz service'te uygulanmadı.
 - Beş Order PostgreSQL testi: uygulama başlangıcı/Flyway/JPA validate, kalıcı kayıt/mapper/fiyat alanları, yanlış toplamın DB'de reddi, request validation ve version/zaman güncellemesi. Bunlar sipariş iş akışı testi değildir.
@@ -46,7 +46,109 @@ Repo üç bağımsız Spring Boot Maven projesini `services/` altında tutar. K�
 mvn -f services/order-service/pom.xml test
 ```
 
-Service iş mantığı öğrenci tarafından yazılacak; controller, HTTP client, idempotency ve outbox sonraki adımlarda eklenecek. Şu an `POST /api/v1/orders` endpointi açık değildir.
+Öğrencinin yazdığı service akışı private yardımcı metotlara ayrılarak tamamlandı. Controller, idempotency ve outbox sonraki adımlarda eklenecek. Şu an `POST /api/v1/orders` endpointi açık değildir.
+
+### Tekrarlı istek koruması: veri altyapısı
+
+`request_idempotency` tablosu V2 migration ile tanımlandı.
+`(client_id, idempotency_key)` birlikte primary key'dir; istek özeti,
+aynı servis içindeki siparişin UUID'si ve oluşturulma zamanı saklanır.
+Client ID en fazla 64, anahtar 128 karakterdir; boş değerler reddedilir.
+Anahtarlar trim veya küçük harfe çevrilmez.
+
+`OrderRequestFingerprint`, doğrulanmış Java alanlarından
+`v1|productId|quantity|paymentScenario` biçiminde UTF-8 metin üretip
+SHA-256 ile 64 karakterli hex özet oluşturur. JSON boşluk/sıra farkları
+özete etki etmez. Fiyat ve zaman dahil değildir; aynı istek farklı
+bir günde tekrarlandığında mevcut fiyat snapshot'ı korunabilmelidir.
+Bu özet şifreleme, parola saklama veya kimlik doğrulama mekanizması değildir.
+
+`RequestIdempotency` insert-only kullanım için Persistable ve Immutable
+olarak tanımlıdır: elle atanmış composite ID'nin JPA tarafından merge
+edilip eski sipariş/özetin sessizce değiştirilmesi önlenir. Aynı müşteri
+ve anahtarı ikinci kez insert etmek DB constraint hatası verir.
+Bu hatadan sonra eski siparişe dönme veya içerik çakışması kararı service'e bağlandı; HTTP 409 eşlemesi controller ile birlikte eklenecek.
+
+```bash
+mvn -f services/order-service/pom.xml -Dtest=OrderRequestFingerprintTest,RequestIdempotencyIntegrationTest test
+```
+
+Sekiz yeni test; kararlı özet, alan değişiklikleri, geçersiz girdi,
+composite kimlik eşitliği, kayıt/okuma, duplicate insert'in eski kaydı
+ezmemesi, farklı müşterilerin aynı anahtarı kullanması ve olmayan
+siparişe FK kontrolünü kapsar. Sipariş ve anahtarın atomik kaydı,
+yarışta kaybedenin rollback'i ve eşzamanlı replay için service testleri
+de eklendi. HTTP header/controller davranışı ve client kimliğinin
+güvenilir kaynaktan elde edilmesi henüz bağlanmadı.
+
+**Durum:** Service düzeyinde tekrar koruması uygulanmıştır. Tek sözleşme
+createOrder(request, clientId, idempotencyKey) olarak bırakıldı; anahtarsız
+eski metot kaldırıldı. İstek ve metadata doğrulanır, özet hesaplanır ve
+kayıt Inventory çağrısından önce aranır. Aynı özet varsa mevcut sipariş
+döner; farklıysa IdempotencyConflictException fırlatılır. Replay'de
+Inventory kapalı veya ürün fiyatı değişmiş olsa da eski fiyat snapshot'ı
+korunur. HTTP endpointi ve güvenilir müşteri kimliği hâlâ yoktur.
+
+Yeni istekte sipariş ve request_idempotency kaydı aynı transaction içinde
+saveAndFlush ile yazılır. Flush, commit değildir; anahtar kaydı başarısızsa
+sipariş de rollback edilir. Aynı anahtar yarışı yalnız SQLSTATE 23505 ve
+pk_request_idempotency constraint adı eşleştiğinde ele alınır; diğer veri
+hataları gizlenmez. Kaybeden transaction tamamen geri alındıktan sonra
+ayrı okuma transaction'ında kazananın kaydı bulunur ve özet tekrar kontrol edilir.
+
+OrderCreationIntegrationTest içinde iki yarış tipi üçer tekrarda
+doğrulanır: aynı içerikte iki çağrıya aynı orderId, farklı içerikte tek
+başarı/tek çakışma; her ikisinde tek order ve tek anahtar kaydı.
+Bu testlerde Inventory client test double'dır; tüm olası zamanlamalar,
+yük testi veya gerçek iki servis arasında uçtan uca HTTP kanıtı değildir.
+
+Son seçili regresyon **114 test** ile başarılıdır: 62 Inventory,
+51 Order ve 1 Payment. Tam suite iddia edilmez. Bu service güncellemesi
+sonrası Docker image'ı yeniden oluşturulmadı; yerel geliştirme verilerine
+test siparişi eklenmedi. Commit/push ayrı adımdır.
+
+V2 migration yerel Docker order_db üzerinde başarıyla uygulandı;
+request_idempotency tablosu boş olarak hazırdır. Order image'ı güncellendi.
+Son seçili regresyon **101 test** ile başarılıdır: 62 Inventory,
+38 Order ve 1 Payment. Controller veya eşzamanlı sipariş replay testi
+bu foundation kapsamında değildir.
+
+### Temel Order oluşturma service'i
+
+`OrderServiceImpl.createOrder`: isteği doğrula → Inventory'den aktif
+ürünü getir → BigDecimal ile toplamı hesapla → Order oluştur → kaydet.
+Geçersiz/null istek, eksik ürün/senaryo, null/sıfır/negatif miktar ve
+pasif ürün reddedilir. Toplam NUMERIC(19,2) üst sınırını aşarsa kayıt
+öncesi anlaşılır hata verilir; fiyat sıfır olabilir.
+
+HTTP çağrısını yöneten ana metot `@Transactional(NOT_SUPPORTED)` ile
+transaction dışında tutulur; çağıranda transaction varsa geçici askıya
+alınır. Ayrı Spring bean'i `OrderPersistenceService`, mevcut kaydı
+readOnly transaction'da okur; save ile sipariş, tekrar kaydı ve DTO
+dönüşümünü tek yazma transaction'ında yapar. Private metoda annotation
+koyarak transaction açıldığı varsayılmaz.
+
+```bash
+mvn -f services/order-service/pom.xml -Dtest=OrderCreationIntegrationTest test
+```
+
+Yedi gerçek PostgreSQL testi; fiyat snapshot'ı/kayıt/DTO, geçersiz
+isteklerin Inventory çağrısından önce reddi, pasif ürün, Inventory
+hatası, tutar taşması ve sınır/sıfır fiyat, kontrollü DB hatasında
+rollback ve toparlanmayı kapsar. InventoryClient bu testlerde test
+double'dır; gerçek iki uygulama arasındaki sipariş akışı değildir.
+HTTP çağrısı sırasında transaction bulunmadığı, mapper sırasında
+transaction bulunduğu ayrıca kontrol edilir.
+
+Aynı müşteri/anahtar/içerik tekrarında yeni sipariş oluşmaz; yeni anahtar
+veya farklı müşteri bağımsız sipariş oluşturabilir. PENDING_STOCK kaydı
+henüz mesaj yayınlamaz, stok ayırmaz veya ödeme yapmaz. HTTP idempotency
+header/controller bağlantısı, transactional outbox ve saga tamamlanmış sayılmaz.
+
+Bu aşama sonrası **93 seçili test** başarılıdır: 62 Inventory, 30 Order
+ve 1 Payment. Tam suite veya canlı Docker üzerinden uçtan uca sipariş
+oluşturma başarısı iddia edilmez. Güncel Docker ve migration doğrulaması
+tekrarlı istek veri altyapısı bölümünde kayıtlıdır.
 
 Order altyapısı sonrası son seçili regresyon koşumu **60 test** ile başarılıdır: 54 Inventory, 5 Order ve 1 Payment testi. Tam suite koşumu iddia edilmez; eski harici DB context testi seçili liste dışındadır.
 
@@ -88,7 +190,7 @@ Ana repo klasörünün adı `reserveflow` olarak düzenlendi. IntelliJ'de bu kla
 | Servis | Yerel port | Durum |
 |---|---:|---|
 | Inventory | 8080 | Ürün, stok rezervasyonu, commit/release ve PostgreSQL |
-| Order | 8081 | Spring Boot iskeleti; henüz sipariş iş mantığı yok |
+| Order | 8081 | Veri katmanı, HTTP client ve temel oluşturma service'i; endpoint/saga henüz yok |
 | Payment | 8082 | Spring Boot iskeleti; ileride ödeme simülatörü olacak |
 
 ```bash
@@ -140,6 +242,68 @@ docker compose logs --tail=80 inventory
 - `POSTGRES_*` başlangıç ayarları yalnız boş veri alanının ilk kurulumunda uygulanır; `.env` parolasını değiştirmek mevcut DB parolasını değiştirmez.
 
 Docker build şu an `-DskipTests` kullanır; image build başarısı testlerin geçtiğinin kanıtı değildir. Jenkins henüz yoktur.
+
+### Order → Inventory HTTP bağlantı altyapısı
+
+Order içinde `InventoryClient` sözleşmesi ve Spring RestClient kullanan
+`HttpInventoryClient` eklendi. `getProduct(productId)`, Inventory'nin
+`GET /api/v1/products/{id}` endpointini çağırır. Inventory entity/repository
+koduna veya DB'sine erişmez. Order'a ait bağımsız
+`InventoryProductResponse` yalnız id, unitPrice, currency ve active alanlarını alır;
+kullanmadığı ek JSON alanlarını görmezden gelir.
+
+| Ayar | Yerel varsayılan | Compose |
+|---|---|---|
+| INVENTORY_BASE_URL | http://localhost:8080 | http://inventory:8080 |
+| INVENTORY_CONNECT_TIMEOUT | 2s | Varsayılan |
+| INVENTORY_READ_TIMEOUT | 3s | Varsayılan |
+
+404 için `InventoryProductNotFoundException`; diğer başarısız HTTP
+durumları, bağlantı/bekleme hatası, boş/bozuk veya geçersiz ürün yanıtı için
+`InventoryUnavailableException` kullanılır. Dönen ürün kimliği istenenle
+eşleşmelidir; fiyat ve para birimi biçimi doğrulanır. Aktif olmayan ürün
+yanıtı client tarafından reddedilmez; iş kararı service'e aittir.
+Uygulama düzeyinde retry veya circuit breaker henüz yoktur.
+
+```bash
+mvn -f services/order-service/pom.xml -Dtest=HttpInventoryClientTest,OrderServiceApplicationTests test
+```
+
+18 client testi ve 5 Order veri/başlangıç testi başarılıdır. Testler
+HTTP sözleşmesini mock yanıtlarla, gerçek socket üzerinden isteği ve
+yavaş test sunucusunda okuma timeout'unu doğrular. Bu test sunucusu
+Inventory uygulaması değildir; çalışan iki Docker uygulaması arasında
+client çağrısı henüz tetiklenmedi. Client, OrderServiceImpl'e
+constructor üzerinden bağlandı. Controller henüz olmadığından yeni
+bir Order endpointi veya uçtan uca sipariş akışı yoktur.
+
+Son seçili regresyon koşumu **86 test** ile başarılıdır: 62 Inventory,
+23 Order (18 HTTP client + 5 veri/başlangıç) ve 1 Payment.
+Bu ekleme sonrası Order Docker image'ı yeniden oluşturulmadı;
+canlı servisler arası çağrı, sipariş service'i bağlanınca doğrulanacak.
+
+### Ürün ve stok bilgisi okuma
+
+```http
+GET http://localhost:8080/api/v1/products/{id}
+```
+
+`{id}` ürünün UUID'sidir. Başarıda **200 + ProductResponse** döner: ürün kimliği, SKU, ad, birim fiyat, para birimi, active, onHand, reserved ve available. Request gövdesi yoktur; entity veya JPA ilişkileri JSON'a taşınmaz.
+
+- Ürün yok: **404 / PRODUCT_NOT_FOUND**; özel ProductNotFoundException kullanılır.
+- UUID biçimi geçersiz: **400**, service çağrılmaz.
+- Ürün var ama stok kaydı yok: veri tutarsızlığıdır; genel **500 / INTERNAL_ERROR** döner, iç hata ayrıntısı gizlenir.
+- Service girişinde null ID reddedilir. Okuma readOnly transaction içinde yapılır; private yardımcı metotlar kimlik kontrolü, ürün ve stok bulmayı ayırır.
+- Okuma için pessimistic kilit alınmaz; stok bilgisi rezervasyon garantisi değildir. Stok uygunluğu rezervasyon sırasında kilit altında tekrar değerlendirilir.
+- Pasif ürün okunabilir ve active=false döner; endpoint pasifliği gizlemez. Order oluşturma sırasında aktif ürün kontrolü henüz bağlanmadı.
+
+```bash
+mvn -f services/inventory-service/pom.xml -Dtest=ProductControllerTest,ProductReadIntegrationTest test
+```
+
+Controller testleri GET için başarılı yanıt, 404, hatalı UUID ve eksik stokta genel 500 davranışını kapsar. Ayrı Testcontainers PostgreSQL testleri gerçek service/mapper/DB okumasını, değişmeyen stok değerlerini, olmayan ürün/null ID ve ürünün stoksuz kalması durumlarını doğrular. Order HTTP client bu endpointi çağıracak şekilde oluşturma service'ine bağlandı; canlı uçtan uca akış henüz doğrulanmadı.
+
+Bu eklemeler sonrası **68 seçili test** başarılıdır (62 Inventory, 5 Order, 1 Payment). Inventory image'ı yeniden build edilip başlatıldı. Yerel Docker ortamında mevcut üründe 200 ve DB ile eşleşen fiyat/stok, olmayan üründe 404, hatalı UUID'de 400 doğrulandı. Bu HTTP kontrolleri yalnız okumadır; ürün veya rezervasyon oluşturulmadı.
 
 ### Ürün ve başlangıç stoğu oluşturma
 
