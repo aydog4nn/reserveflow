@@ -19,6 +19,7 @@ public class RabbitMqConfiguration {
     public static final String COMMANDS_EXCHANGE = "reserveflow.commands";
     public static final String RESERVE_STOCK_QUEUE = "inventory.reserve.learning";
     public static final String RESERVE_STOCK_ROUTING_KEY = "inventory.reserve.v1";
+    public static final String STOCK_RESERVED_QUEUE = "order.stock-reserved.learning";
 
     @Bean
     public Queue reserveStockQueue() {
