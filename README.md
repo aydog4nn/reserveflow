@@ -6,13 +6,24 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 | Bilgi | Durum |
 |---|---|
-| Belge tarihi | 19 Ekim 2026 |
-| Proje aşaması | Inventory iş akışları hazır; Order ve Payment bağımsız uygulama iskeletleri eklendi; servis iletişimi ve CI/CD planlandı |
+| Belge tarihi | 20 Ekim 2026 |
+| Proje aşaması | Inventory/Order/Payment temel API'leri hazır; Order → RabbitMQ → Inventory log denemesi doğrulandı; gerçek mesajlı iş akışı ve CI/CD henüz yok |
 | İlk çalışma dönemi | 30 gün; günlük yaklaşık 5–6 saat varsayımı |
 | Ana hedef | Backend/mikroservis kararları ile DevOps operasyonlarını aynı çalışan sistemde göstermek |
 | Kullanım | Yerel ve staging laboratuvarı; gerçek ödeme veya gerçek müşteri verisi yok |
 
 > Aşağıdaki mevcut durum bölümü uygulanmış işleri, numaralı mimari bölümleri ise büyük ölçüde hedef tasarımı anlatır. Hedef diyagramlar ve 30 aşamalı plan bir tamamlanma beyanı değildir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
+
+### RabbitMQ ilk mesajlaşma kontrol noktası — 20 Ekim 2026
+
+- Compose'da RabbitMQ 4.2.9 management, localhost AMQP/yönetim portları, healthcheck, sabit hostname ve kalıcı volume tanımlandı. Parolalar yalnız yerel .env'de tutulur; .env.example anahtarları belgelendirir.
+- Order: ReserveStockCommand record'u, InventoryCommandProducer, JSON converter ve queue/exchange/binding tanımları hazır. Exchange reserveflow.commands, routing key inventory.reserve.v1, kuyruk inventory.reserve.learning.
+- Yalnız açıkça MESSAGING_LAB_ENABLED=true verilirse POST /api/v1/lab/messages/reserve-stock açılır. Gerçek Order oluşturma akışı bu endpoint'i çağırmaz; bu endpoint sipariş/stok/ödeme kaydı oluşturmaz.
+- Inventory kendi ReserveStockCommand tipiyle mesajı okuyup yalnız loga yazar. Order entity/DTO importu veya ortak Java modülü yoktur.
+- Kullanıcı Docker/Postman üzerinden mesajı gönderdi, kuyrukta Ready:1 gördü ve Inventory başladıktan sonra aynı orderId/productId/quantity içeren consumer logunu doğruladı. Bu manuel teslim kanıtıdır.
+- Otomatik testler controller sözleşmesi, opt-in ayarı, gönderim parametreleri, JSON dönüşümü, binding ve consumer log/listener tanımını sınar; gerçek broker üzerinde otomatik uçtan uca test henüz yoktur.
+- Henüz stok ayırma çağrısı, sonuç mesajı, saga, publisher confirm/return, retry/DLQ, outbox/inbox yoktur. 202 veya durable queue uçtan uca güvenilirlik garantisi değildir.
+- Ayrıntılı açma/kapama ve Postman adımları: [Mesajlaşma lab runbook](docs/runbooks/messaging-lab.md).
 
 ### Payment model ve veri altyapısı — 19 Ekim 2026
 
