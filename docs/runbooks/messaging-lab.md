@@ -68,7 +68,39 @@ Service DB commit'i sonrası ACK öncesi crash olursa mesaj tekrar gelebilir.
 Ardışık aynı sipariş/içerik service düzeyinde mevcut rezervasyona döner.
 Eş zamanlı ilk istek yarışı ve başarısız mesajın kurtarılması henüz çözülmedi.
 requeue-rejected=false ve DLQ yokluğu nedeniyle hata alan mesaj kaybolabilir.
-Sonuç olayı henüz yayınlanmaz; Order bu rezervasyondan otomatik haberdar olmaz.
+Sonuç dönüşü hazırlığı: consumer artık service'ten dönen gerçek orderId ve
+reservationId ile StockReservedEvent oluşturup InventoryEventProducer çağırır.
+Exchange reserveflow.events, routing key inventory.reserved.v1, kuyruk
+order.stock-reserved.learning olarak tanımlıdır. Order InventoryEventConsumer
+kendi StockReservedEvent tipiyle sonucu alıp yalnız loga yazar; sipariş DB'si
+güncellenmez ve ödeme başlamaz.
+20 Ekim 2026'da kullanıcı Inventory ve Order image'larını yeniden oluşturup
+önceki başarılı rezervasyon komutunu aynı orderId/productId/quantity ile
+tekrar gönderdi. Order logunda "Stok ayrıldı sonucu geldi:
+StockReservedEvent[orderId=..., reservationId=...]" görüldüğünü doğruladı.
+Bu, lab endpoint → Inventory rezervasyon service'i → sonuç yayını → Order
+log akışının manuel canlı kanıtıdır; gerçek sipariş/ödeme saga akışı değildir.
+Bu son denemede stok GET değeri ayrıca raporlanmadı; önceki ardışık tekrar
+canlı denemesi ve izole PostgreSQL testleri çift rezervasyon kontrolünü kapsar.
+İlgili 22 test başarıyla tamamlandı; otomatik gerçek broker uçtan uca testi yoktur.
+
+Yeni tanımlar önce Inventory tarafından oluşturulduğundan canlı deneme
+başlatma sırası: rabbitmq çalışır durumda olmalı, ardından Inventory image'ı
+build edilip başlatılmalı. Inventory loglarında broker bağlantısı başarılı
+olmalı ve RabbitMQ'da order.stock-reserved.learning kuyruğu görünmeli.
+Sonra Order image'ı build edilip başlatılır. Bu manuel sıra Compose tarafından
+henüz zorunlu kılınmaz. Order consumer kuyruk yokken başlatılırsa hata alabilir.
+
+Lab komutundan sonra Order loglarında "Stok ayrıldı sonucu geldi:
+StockReservedEvent[...]" beklenir. Önceki test ürününün aynı orderId/miktarı
+ile tekrar komut mevcut rezervasyona döner ve tekrar sonuç yayınlayabilir.
+Bu tekrar sonuçları Order şimdilik yalnız logladığından business deduplication
+kanıtı sayılmaz.
+Rezervasyon commit'i ile mesaj yayınlama atomik değildir. Broker gönderimi
+hata verirse rezervasyon DB'de kalır, hata listener'a çıkar. Mevcut ayarda
+komut kaybolabilir; outbox/retry olmadan otomatik kurtarma garantisi yoktur.
+İzole PostgreSQL testinde bu arıza ve elle tekrar çağrıda çift rezervasyon
+olmaması doğrulandı; gerçek broker arızası veya otomatik retry testi değildir.
 Unit/MockMvc testleri gerçek broker teslimi testi değildir.
 
 Consumer → gerçek service → izole PostgreSQL testleri rezervasyon, ardışık

@@ -16,6 +16,18 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 ### RabbitMQ ilk mesajlaşma kontrol noktası — 20 Ekim 2026
 
+**Sonuç mesajı dönüşü — 20 Ekim 2026:** Inventory, reserveStock tamamlandıktan
+sonra gerçek orderId/reservationId ile StockReservedEvent yayınlar.
+reserveflow.events → inventory.reserved.v1 → order.stock-reserved.learning
+yolu üzerinden Order kendi DTO'suyla sonucu alıp yalnız loglar. Sipariş DB
+durumu güncellenmez ve ödeme başlamaz. Kullanıcı Docker/Postman denemesinde
+aynı rezervasyon komutunu tekrar gönderip Order logundaki sonucu doğruladı.
+İlgili 22 test başarılıdır; bunlar unit/MockMvc, JSON ve izole PostgreSQL
+testleridir, otomatik broker uçtan uca testi değildir.
+DB commit ile yayın atomik değildir; yayın hatasında rezervasyon DB'de kalır.
+Tekrar komut mevcut rezervasyona dönebilir fakat sonuç yeniden yayınlanır.
+Outbox/inbox, publisher confirm/return, retry/DLQ henüz yoktur.
+
 **Sonraki aşama, consumer stok bağlantısı:** Inventory consumer artık mevcut
 reserveStock service'ini çağırır; başarı logu service tamamlandıktan sonra yazılır,
 hata dışarı iletilir. İzole PostgreSQL testleri ve mock testleri eklendi.
