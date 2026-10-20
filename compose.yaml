@@ -45,6 +45,9 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/inventory_db
       DB_USERNAME: inventory_app
       DB_PASSWORD: ${INVENTORY_DB_PASSWORD:?Inventory parolasi gerekli}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,6 +66,10 @@ services:
       INVENTORY_BASE_URL: http://inventory:8080
       DB_USERNAME: order_app
       DB_PASSWORD: ${ORDER_DB_PASSWORD:?Order parolasi gerekli}
+      RABBITMQ_HOST: rabbitmq
+      MESSAGING_LAB_ENABLED: ${MESSAGING_LAB_ENABLED:-false}
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
     depends_on:
       db-setup:
         condition: service_completed_successfully
@@ -81,5 +88,27 @@ services:
       db-setup:
         condition: service_completed_successfully
 
+
+  rabbitmq:
+    image: rabbitmq:4.2.9-management
+    hostname: reserveflow-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
+      RABBITMQ_DEFAULT_VHOST: reserveflow
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_running"
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 volumes:
   postgres_data:
+  rabbitmq_data:
