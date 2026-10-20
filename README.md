@@ -16,6 +16,17 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 ### RabbitMQ ilk mesajlaşma kontrol noktası — 20 Ekim 2026
 
+**Sonraki aşama, consumer stok bağlantısı:** Inventory consumer artık mevcut
+reserveStock service'ini çağırır; başarı logu service tamamlandıktan sonra yazılır,
+hata dışarı iletilir. İzole PostgreSQL testleri ve mock testleri eklendi.
+İlgili 7 test başarılıdır (consumer, JSON/topoloji ve izole PostgreSQL).
+Kullanıcı yeni, 10 stoklu test ürünüyle Docker/Postman üzerinden mesaj gönderdi;
+GET sonucunda onHand=10, reserved=3, available=7 doğrulandı. Aynı mesajın
+ardışık tekrarından sonra değerler değişmedi. Bu, lab mesajı üzerinden
+manuel stok rezervasyonu kanıtıdır; gerçek Order oluşturma/saga akışı değildir. Aşağıdaki
+yalnız-log maddeleri önceki kontrol noktasının kanıtıdır, güncel consumer davranışı değildir.
+Retry/DLQ ve sonuç mesajı yoktur; bu aşama production güvenilirliği sağlamaz.
+
 - Compose'da RabbitMQ 4.2.9 management, localhost AMQP/yönetim portları, healthcheck, sabit hostname ve kalıcı volume tanımlandı. Parolalar yalnız yerel .env'de tutulur; .env.example anahtarları belgelendirir.
 - Order: ReserveStockCommand record'u, InventoryCommandProducer, JSON converter ve queue/exchange/binding tanımları hazır. Exchange reserveflow.commands, routing key inventory.reserve.v1, kuyruk inventory.reserve.learning.
 - Yalnız açıkça MESSAGING_LAB_ENABLED=true verilirse POST /api/v1/lab/messages/reserve-stock açılır. Gerçek Order oluşturma akışı bu endpoint'i çağırmaz; bu endpoint sipariş/stok/ödeme kaydı oluşturmaz.

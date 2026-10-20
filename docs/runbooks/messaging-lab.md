@@ -1,9 +1,13 @@
 # Order mesaj gönderme laboratuvarı
 
-Bu endpoint gerçek sipariş oluşturmaz, stok ayırmaz ve Order service akışına bağlı değildir.
+Bu endpoint gerçek sipariş oluşturmaz ve Order service akışına bağlı değildir.
+Inventory consumer artık reserveStock çağırır: mesaj tüketildiğinde stok rezervasyonu
+gerçekten yapılır. Yalnız ayrılmış test ürünü ve yeni orderId ile dene.
 Authentication yoktur; yalnız localhost geliştirme ortamında kullanılır.
-Inventory consumer inventory.reserve.learning kuyruğunu dinler ve yalnız log yazar.
-Stok service'ini çağırmaz; stok ve rezervasyon tablolarını değiştirmez.
+Inventory consumer inventory.reserve.learning kuyruğunu dinler, mevcut
+transactional stok service'ini çağırır ve başarıdan sonra log yazar.
+Service hatası yutulmaz; başarı logu yazılmaz. AUTO ack, service proxy'si
+commit edip listener normal döndükten sonra gönderilir.
 
 Inventory hazırlığı: AMQP bağımlılığı, Compose bağlantı değişkenleri,
 aynı queue/exchange/binding tanımları ve JSON converter eklidir.
@@ -54,12 +58,30 @@ RabbitMQ UI'de reserveflow vhost'u, inventory.reserve.learning kuyruğunu kontro
 Exchange reserveflow.commands, routing key inventory.reserve.v1 kullanılır.
 Inventory consumer çalışırken Ready hızla sıfıra düşebilir. Mesajın alındığını
 `docker compose logs --tail=50 inventory` çıktısındaki
-"Stok ayırma mesajı geldi: ReserveStockCommand[...]" satırıyla doğrula.
+"Stok rezervasyonu tamamlandı: ReserveStockCommand[...]" satırıyla doğrula.
 Yalnız Ready azalması işleme kanıtı değildir. Gerçek iş verisi gönderme.
 
 Bitirince MESSAGING_LAB_ENABLED=false yapıp order container'ını yeniden oluştur.
 Varsayılan false'tur; kapalıyken endpoint kayıt edilmez (404).
 Bu labda publisher confirm/return, retry ve outbox/inbox yoktur.
-Consumer logdan döndükten sonra listener AUTO ack kullanır; bu,
-projedeki stok işleminin tamamlandığı anlamına gelmez.
+Service DB commit'i sonrası ACK öncesi crash olursa mesaj tekrar gelebilir.
+Ardışık aynı sipariş/içerik service düzeyinde mevcut rezervasyona döner.
+Eş zamanlı ilk istek yarışı ve başarısız mesajın kurtarılması henüz çözülmedi.
+requeue-rejected=false ve DLQ yokluğu nedeniyle hata alan mesaj kaybolabilir.
+Sonuç olayı henüz yayınlanmaz; Order bu rezervasyondan otomatik haberdar olmaz.
 Unit/MockMvc testleri gerçek broker teslimi testi değildir.
+
+Consumer → gerçek service → izole PostgreSQL testleri rezervasyon, ardışık
+tekrar, çelişkili içerik ve yetersiz stokta rollback'i doğrular. Bu testlerde
+Rabbit listener otomatik başlangıcı kapalıdır; geliştirme kuyruğu tüketilmez.
+## Canlı stok rezervasyonu kanıtı — 20 Ekim 2026
+
+Kullanıcı Inventory image'ını yeniden oluşturup API üzerinden 10 stoklu
+test ürünü oluşturdu: a993c58b-02f1-48f0-a9ed-3ceaf7c7fa41.
+Lab endpoint'ine orderId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,
+bu productId ve quantity=3 gönderildi.
+Ürün GET yanıtında onHand=10, reserved=3, available=7 doğrulandı.
+Aynı mesaj ardışık tekrar gönderildiğinde GET değerleri aynı kaldı.
+Bu manuel Docker/Postman denemesidir; otomatik broker/crash testi değildir.
+Yeni denemelerde ayrı ürün/orderId kullan; yukarıdaki mevcut kaydın
+aynı olacağını veya stoğun değişmediğini varsayma.
