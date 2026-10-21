@@ -20,6 +20,9 @@ public class RabbitMqConfiguration {
     public static final String RESERVE_STOCK_QUEUE = "inventory.reserve.learning";
     public static final String RESERVE_STOCK_ROUTING_KEY = "inventory.reserve.v1";
     public static final String STOCK_RESERVED_QUEUE = "order.stock-reserved.learning";
+    public static final String PAYMENT_QUEUE = "payment.request.learning";
+    public static final String PAYMENT_ROUTING_KEY = "payment.request.v1";
+
 
     @Bean
     public Queue reserveStockQueue() {
@@ -43,4 +46,15 @@ public class RabbitMqConfiguration {
                 .with(RESERVE_STOCK_ROUTING_KEY);
     }
 
+    @Bean
+    public Queue paymentQueue() {
+        return new Queue(PAYMENT_QUEUE, true);
+    }
+
+    @Bean
+    public Binding paymentBinding() {
+        return BindingBuilder.bind(paymentQueue())
+                .to(commandsExchange())
+                .with(PAYMENT_ROUTING_KEY);
+    }
 }

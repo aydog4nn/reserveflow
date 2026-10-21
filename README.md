@@ -6,13 +6,46 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 | Bilgi | Durum |
 |---|---|
-| Belge tarihi | 20 Ekim 2026 |
-| Proje aşaması | Inventory/Order/Payment temel API'leri hazır; Order → RabbitMQ → Inventory log denemesi doğrulandı; gerçek mesajlı iş akışı ve CI/CD henüz yok |
+| Belge tarihi | 21 Ekim 2026 |
+| Proje aşaması | Gerçek sipariş → stok → ödeme → stok kesinleştirme/bırakma → CONFIRMED/CANCELLED temel akışı doğrulandı; CI/CD ve ileri mesaj güvenilirliği henüz yok |
 | İlk çalışma dönemi | 30 gün; günlük yaklaşık 5–6 saat varsayımı |
 | Ana hedef | Backend/mikroservis kararları ile DevOps operasyonlarını aynı çalışan sistemde göstermek |
 | Kullanım | Yerel ve staging laboratuvarı; gerçek ödeme veya gerçek müşteri verisi yok |
 
 > Aşağıdaki mevcut durum bölümü uygulanmış işleri, numaralı mimari bölümleri ise büyük ölçüde hedef tasarımı anlatır. Hedef diyagramlar ve 30 aşamalı plan bir tamamlanma beyanı değildir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
+
+### Güncel temel akış — 21 Ekim 2026
+
+1. Gerçek POST /api/v1/orders siparişi ve HTTP idempotency kaydını oluşturur; commit sonrası stok talimatı yayınlar.
+2. Inventory stok ayırır ve rezervasyon kimliğiyle sonuç döner. Order PAYMENT_PENDING olur ve kayıtlı tutarla ödeme talimatı yayınlar.
+3. Payment SUCCESS/DECLINE sonucunu DB commit sonrasında yayınlar; DELAY için zaman dolup scheduler kaydı tamamlayana kadar sonuç yayınlanmaz.
+4. Order ödeme kimliği/tutar/para birimini doğrular; başarıda STOCK_COMMIT_PENDING, rette COMPENSATION_PENDING olur ve Inventory'ye ilgili stok talimatını gönderir.
+5. Inventory doğru rezervasyonu kontrol ederek mevcut commit/release service'ini kullanır. Stok transaction'ı tamamlandıktan sonra COMMITTED/RELEASED sonucu gönderir.
+6. Order yalnız eşleşen stok bitiş sonucunu alınca CONFIRMED/CANCELLED olur. Erken, yanlış kimlikli veya çelişkili sonuç reddedilir; aynı geçerli sonuç tekrarında kayıt yeniden değiştirilmez.
+
+Üç servis ve gerçek RabbitMQ/PostgreSQL ile otomatik izole smoke denemesi başarılı:
+
+| Senaryo | Son sipariş durumu | Başlangıç stoğu | Son onHand | Son reserved |
+|---|---|---|---|---|
+| SUCCESS, miktar 3 | CONFIRMED | 10 | 7 | 0 |
+| DECLINE, miktar 3 | CANCELLED | 10 | 10 | 0 |
+| DELAY, miktar 3 | CONFIRMED | 10 | 7 | 0 |
+
+Aynı HTTP anahtarıyla terminal sipariş tekrarında orderId ve stok değerlerinin korunduğu doğrulandı.
+Deneme ayrı container'lar, veritabanları ve portlar kullandı; kullanıcının Compose verilerine dokunmadı.
+Son geniş regresyon: **263 test başarılı** (81 Inventory, 113 Order, 69 Payment).
+Harici DB ortamı bekleyen eski InventoryServiceApplicationTests kapsam dışı bırakıldı;
+bu nedenle tam suite iddiası değildir. Regresyonda listener başlangıcı kapatılıp
+test kimlik bilgileri verildi; gerçek broker akışı ayrı smoke denemesinde sınandı.
+Tekrar çalıştırma: `mvn -DskipTests package`, ardından `python3 scripts/smoke_message_flow.py`.
+Bu script Spring uygulamalarını host Java süreçleri olarak, broker ve DB'yi izole Docker container'larında çalıştırır; Kubernetes/Compose deployment testi değildir.
+
+**Sınırlar:** DB commit ve broker yayını atomik değildir; AFTER_COMMIT outbox yerine geçmez.
+Publisher confirms, outbox/inbox, retry/DLQ ve tüm crash pencereleri henüz tamamlanmadı.
+TECHNICAL_FAILURE ödeme reddi sayılmaz; otomatik kurtarma yoktur, sipariş ödeme beklerken kalabilir.
+Yetersiz stok için Order'a otomatik ret sonucu henüz yoktur. API'ler authentication olmayan localhost lab arayüzleridir.
+Bu sürüm temel başarı/ödeme reddi/gecikme akışıdır; production-ready veya exactly-once iddiası yoktur.
+Önceki tarihli bölümler adım adım gelişim geçmişidir; güncel kapsam bu bölümdür.
 
 ### RabbitMQ ilk mesajlaşma kontrol noktası — 20 Ekim 2026
 

@@ -5,6 +5,13 @@ import com.aydog4nn.reserveflow.order.domain.OrderStatus;
 import com.aydog4nn.reserveflow.order.domain.PaymentScenario;
 import com.aydog4nn.reserveflow.order.repository.OrderRepository;
 import com.aydog4nn.reserveflow.order.service.abs.IOrderReservationService;
+import com.aydog4nn.reserveflow.order.messaging.consumer.InventoryEventConsumer;
+import com.aydog4nn.reserveflow.order.messaging.dto.StockReservedEvent;
+import com.aydog4nn.reserveflow.order.messaging.dto.RequestPaymentCommand;
+import com.aydog4nn.reserveflow.order.messaging.producer.PaymentCommandProducer;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.amqp.AmqpException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,6 +28,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
         "spring.rabbitmq.listener.simple.auto-startup=false",
@@ -29,6 +37,43 @@ import static org.junit.jupiter.api.Assertions.*;
 })
 @Testcontainers
 class OrderReservationServiceIntegrationTest {
+
+    @Autowired
+    private InventoryEventConsumer consumer;
+
+    @MockitoBean
+    private PaymentCommandProducer paymentProducer;
+
+    @Test
+    void consumerPublishesSnapshotOnlyAfterReservationCommit() {
+        Order order = newOrder();
+        UUID reservationId = UUID.randomUUID();
+        doAnswer(invocation -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            Order saved = orders.findById(order.getId()).orElseThrow();
+            assertEquals(reservationId, saved.getReservationId());
+            assertEquals(OrderStatus.PAYMENT_PENDING, saved.getStatus());
+            return null;
+        }).when(paymentProducer).sendRequestPayment(any());
+        StockReservedEvent event = new StockReservedEvent(order.getId(), reservationId);
+        consumer.receive(event);
+        consumer.receive(event);
+        verify(paymentProducer, times(2)).sendRequestPayment(new RequestPaymentCommand(
+                order.getId(), new BigDecimal("4500.00"), "TRY", PaymentScenario.SUCCESS));
+    }
+
+    @Test
+    void publicationFailureDoesNotUndoReservationState() {
+        Order order = newOrder();
+        UUID reservationId = UUID.randomUUID();
+        doThrow(new AmqpException("Test payment publication outage"))
+                .when(paymentProducer).sendRequestPayment(any());
+        assertThrows(AmqpException.class,
+                () -> consumer.receive(new StockReservedEvent(order.getId(), reservationId)));
+        Order saved = orders.findById(order.getId()).orElseThrow();
+        assertEquals(OrderStatus.PAYMENT_PENDING, saved.getStatus());
+        assertEquals(reservationId, saved.getReservationId());
+    }
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17")

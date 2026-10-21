@@ -28,9 +28,83 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@SpringBootTest(properties = "payment.scheduling.enabled=false")
+@SpringBootTest(properties = {"payment.scheduling.enabled=false", "spring.rabbitmq.listener.simple.auto-startup=false"})
 @Testcontainers
 class PaymentServiceIntegrationTest {
+
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate;
+
+    @Test
+    void terminalPaymentPublishesResultWithRealPaymentId() {
+        UUID orderId = UUID.randomUUID();
+        PaymentResponse result = service.createPayment(request(orderId, "4500.00", PaymentScenario.SUCCESS));
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(
+                "reserveflow.events", "payment.succeeded.v1",
+                new com.aydog4nn.reserveflow.payment.messaging.dto.PaymentResultEvent(
+                        orderId, result.paymentId(), new BigDecimal("4500.00"), "TRY",
+                        com.aydog4nn.reserveflow.payment.messaging.dto.PaymentResultEvent.Outcome.SUCCEEDED, null));
+        assertTrue(payments.findById(result.paymentId()).isPresent());
+    }
+
+    @Test
+    void delayPublishesOnlyWhenWorkerCompletesPayment() {
+        UUID orderId = UUID.randomUUID();
+        PaymentResponse pending = service.createPayment(request(orderId, "10.00", PaymentScenario.DELAY));
+        org.mockito.Mockito.verifyNoInteractions(rabbitTemplate);
+        Payment payment = payments.findById(pending.paymentId()).orElseThrow();
+        payment.setReadyAt(Instant.now().minusSeconds(1));
+        payments.saveAndFlush(payment);
+        assertEquals(1, service.completeDuePayments());
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(
+                "reserveflow.events", "payment.succeeded.v1",
+                new com.aydog4nn.reserveflow.payment.messaging.dto.PaymentResultEvent(
+                        orderId, pending.paymentId(), new BigDecimal("10.00"), "TRY",
+                        com.aydog4nn.reserveflow.payment.messaging.dto.PaymentResultEvent.Outcome.SUCCEEDED, null));
+        assertEquals(0, service.completeDuePayments());
+        org.mockito.Mockito.verifyNoMoreInteractions(rabbitTemplate);
+    }
+
+    @Test
+    void declinePublishesFailedResultButTechnicalFailurePublishesNothing() {
+        PaymentResponse declined = service.createPayment(request(UUID.randomUUID(), "10", PaymentScenario.DECLINE));
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(
+                org.mockito.ArgumentMatchers.eq("reserveflow.events"),
+                org.mockito.ArgumentMatchers.eq("payment.failed.v1"),
+                org.mockito.ArgumentMatchers.any(Object.class));
+        org.mockito.Mockito.clearInvocations(rabbitTemplate);
+        assertThrows(PaymentTechnicalException.class,
+                () -> service.createPayment(request(UUID.randomUUID(), "10", PaymentScenario.TECHNICAL_FAILURE)));
+        org.mockito.Mockito.verifyNoInteractions(rabbitTemplate);
+        assertEquals(PaymentStatus.FAILED, declined.status());
+    }
+
+    @Autowired
+    private com.aydog4nn.reserveflow.payment.messaging.consumer.PaymentCommandConsumer consumer;
+
+    @Test
+    void consumerCreatesPaymentAndReplayKeepsSinglePayment() {
+        UUID orderId = UUID.randomUUID();
+        var command = new com.aydog4nn.reserveflow.payment.messaging.dto.RequestPaymentCommand(
+                orderId, new BigDecimal("4500.00"), "TRY", PaymentScenario.SUCCESS);
+        consumer.receive(command);
+        var first = payments.findByOrderId(orderId).orElseThrow();
+        assertEquals(PaymentStatus.SUCCEEDED, first.getStatus());
+        consumer.receive(command);
+        assertEquals(first.getId(), payments.findByOrderId(orderId).orElseThrow().getId());
+        assertEquals(1, payments.count());
+    }
+
+    @Test
+    void invalidConsumerInputAndTechnicalFailureLeaveNoPayment() {
+        var invalid = new com.aydog4nn.reserveflow.payment.messaging.dto.RequestPaymentCommand(
+                UUID.randomUUID(), new BigDecimal("-1"), "TRY", PaymentScenario.SUCCESS);
+        assertThrows(jakarta.validation.ConstraintViolationException.class, () -> consumer.receive(invalid));
+        var technical = new com.aydog4nn.reserveflow.payment.messaging.dto.RequestPaymentCommand(
+                UUID.randomUUID(), BigDecimal.TEN, "TRY", PaymentScenario.TECHNICAL_FAILURE);
+        assertThrows(PaymentTechnicalException.class, () -> consumer.receive(technical));
+        assertEquals(0, payments.count());
+    }
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17")
@@ -54,6 +128,35 @@ class PaymentServiceIntegrationTest {
     @BeforeEach
     void clearPayments() {
         payments.deleteAllInBatch();
+        org.mockito.Mockito.clearInvocations(rabbitTemplate);
+    }
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Test
+    void resultIsNotPublishedBeforeCommit() {
+        var transaction = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        transaction.executeWithoutResult(status -> {
+            service.createPayment(request(UUID.randomUUID(), "10", PaymentScenario.SUCCESS));
+            org.mockito.Mockito.verifyNoInteractions(rabbitTemplate);
+        });
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(
+                org.mockito.ArgumentMatchers.eq("reserveflow.events"),
+                org.mockito.ArgumentMatchers.eq("payment.succeeded.v1"),
+                org.mockito.ArgumentMatchers.any(Object.class));
+    }
+
+    @Test
+    void rolledBackPaymentNeverPublishesSuccess() {
+        UUID orderId = UUID.randomUUID();
+        var transaction = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        transaction.executeWithoutResult(status -> {
+            service.createPayment(request(orderId, "10", PaymentScenario.SUCCESS));
+            status.setRollbackOnly();
+        });
+        assertTrue(payments.findByOrderId(orderId).isEmpty());
+        org.mockito.Mockito.verifyNoInteractions(rabbitTemplate);
     }
 
     @Test

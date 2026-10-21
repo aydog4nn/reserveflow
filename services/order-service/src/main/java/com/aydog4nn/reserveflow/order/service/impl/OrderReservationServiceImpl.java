@@ -2,6 +2,8 @@ package com.aydog4nn.reserveflow.order.service.impl;
 
 import com.aydog4nn.reserveflow.order.domain.Order;
 import com.aydog4nn.reserveflow.order.domain.OrderStatus;
+import com.aydog4nn.reserveflow.order.dto.response.OrderResponse;
+import com.aydog4nn.reserveflow.order.mapper.OrderMapper;
 import com.aydog4nn.reserveflow.order.repository.OrderRepository;
 import com.aydog4nn.reserveflow.order.service.abs.IOrderReservationService;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,22 +15,29 @@ import java.util.UUID;
 public class OrderReservationServiceImpl implements IOrderReservationService {
 
     private final OrderRepository orderRepository;
+    private final OrderMapper orderMapper;
 
-    public OrderReservationServiceImpl(OrderRepository orderRepository) {
+    public OrderReservationServiceImpl(OrderRepository orderRepository, OrderMapper orderMapper) {
         this.orderRepository = orderRepository;
+        this.orderMapper = orderMapper;
     }
 
     @Transactional
     @Override
-    public void handleStockReserved(UUID orderId, UUID reservationId) {
+    public OrderResponse handleStockReserved(UUID orderId, UUID reservationId) {
         validateIdentifiers(orderId, reservationId);
         Order order = findOrderForUpdate(orderId);
+
         if (reservationId.equals(order.getReservationId())) {
-            return;
+            return orderMapper.toResponse(order);
         }
+
         validateReservationTransition(order);
+
         order.setReservationId(reservationId);
         order.setStatus(OrderStatus.PAYMENT_PENDING);
+
+        return orderMapper.toResponse(order);
     }
 
     private void validateIdentifiers(UUID orderId, UUID reservationId) {
