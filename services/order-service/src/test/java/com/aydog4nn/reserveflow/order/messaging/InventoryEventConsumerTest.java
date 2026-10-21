@@ -2,6 +2,7 @@ package com.aydog4nn.reserveflow.order.messaging;
 
 import com.aydog4nn.reserveflow.order.messaging.consumer.InventoryEventConsumer;
 import com.aydog4nn.reserveflow.order.messaging.dto.StockReservedEvent;
+import com.aydog4nn.reserveflow.order.service.abs.IOrderReservationService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -12,6 +13,13 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(OutputCaptureExtension.class)
 class InventoryEventConsumerTest {
@@ -19,8 +27,22 @@ class InventoryEventConsumerTest {
     @Test
     void logsReceivedReservationResult(CapturedOutput output) {
         StockReservedEvent event = new StockReservedEvent(UUID.randomUUID(), UUID.randomUUID());
-        new InventoryEventConsumer().receive(event);
+        IOrderReservationService reservationService = mock(IOrderReservationService.class);
+        new InventoryEventConsumer(reservationService).receive(event);
+        verify(reservationService).handleStockReserved(event.orderId(), event.reservationId());
+        verifyNoMoreInteractions(reservationService);
         assertTrue(output.getOut().contains("Stok ayrıldı sonucu geldi: " + event));
+    }
+
+    @Test
+    void propagatesServiceErrorWithoutLoggingSuccess(CapturedOutput output) {
+        StockReservedEvent event = new StockReservedEvent(UUID.randomUUID(), UUID.randomUUID());
+        IOrderReservationService service = mock(IOrderReservationService.class);
+        IllegalArgumentException failure = new IllegalArgumentException("Sipariş bulunamadı");
+        doThrow(failure).when(service).handleStockReserved(event.orderId(), event.reservationId());
+        assertSame(failure, assertThrows(IllegalArgumentException.class,
+                () -> new InventoryEventConsumer(service).receive(event)));
+        assertFalse(output.getOut().contains("Stok ayrıldı sonucu geldi:"));
     }
 
     @Test
