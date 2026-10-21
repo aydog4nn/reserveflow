@@ -3,8 +3,11 @@ package com.aydog4nn.reserveflow.order.service.impl;
 import com.aydog4nn.reserveflow.order.client.InventoryClient;
 import com.aydog4nn.reserveflow.order.client.dto.InventoryProductResponse;
 import com.aydog4nn.reserveflow.order.domain.Order;
+import com.aydog4nn.reserveflow.order.domain.OrderStatus;
 import com.aydog4nn.reserveflow.order.domain.RequestIdempotencyId;
 import com.aydog4nn.reserveflow.order.idempotency.OrderRequestFingerprint;
+import com.aydog4nn.reserveflow.order.messaging.dto.ReserveStockCommand;
+import com.aydog4nn.reserveflow.order.messaging.producer.InventoryCommandProducer;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Propagation;
@@ -27,12 +30,15 @@ public class OrderServiceImpl implements IOrderService {
     private final InventoryClient inventoryClient;
     private final OrderPersistenceService orderPersistenceService;
     private final OrderRequestFingerprint requestFingerprint;
+    private final InventoryCommandProducer inventoryCommandProducer;
+
 
     public OrderServiceImpl(InventoryClient inventoryClient, OrderPersistenceService orderPersistenceService,
-                            OrderRequestFingerprint requestFingerprint) {
+                            OrderRequestFingerprint requestFingerprint, InventoryCommandProducer inventoryCommandProducer) {
         this.inventoryClient = inventoryClient;
         this.orderPersistenceService = orderPersistenceService;
         this.requestFingerprint = requestFingerprint;
+        this.inventoryCommandProducer = inventoryCommandProducer;
     }
 
 
@@ -45,12 +51,15 @@ public class OrderServiceImpl implements IOrderService {
         String requestHash = requestFingerprint.hash(request);
         Optional<OrderResponse> existing = orderPersistenceService.findExisting(id, requestHash);
         if (existing.isPresent()) {
-            return existing.get();
+            return requestStockIfPending(existing.get());
         }
         InventoryProductResponse product = findActiveProduct(request);
         BigDecimal totalAmount = calculateTotalAmount(product.unitPrice(), request.quantity());
         Order order = buildOrder(request, product, totalAmount);
-        return saveOrReplay(order, id, requestHash);
+        OrderResponse savedOrder = saveOrReplay(order, id, requestHash);
+        return requestStockIfPending(savedOrder);
+
+
     }
 
 
@@ -135,7 +144,19 @@ public class OrderServiceImpl implements IOrderService {
         }
     }
 
+    private OrderResponse requestStockIfPending(OrderResponse order) {
+        if (order.status() == OrderStatus.PENDING_STOCK) {
+            inventoryCommandProducer.sendReserveStock(
+                    new ReserveStockCommand(
+                            order.orderId(),
+                            order.productId(),
+                            order.quantity()
+                    )
+            );
+        }
 
+        return order;
+    }
 
 
 

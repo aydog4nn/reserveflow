@@ -1,5 +1,27 @@
 # Order mesaj gönderme laboratuvarı
 
+## Devam eden aşama — 21 Ekim 2026
+
+Order InventoryEventConsumer artık IOrderReservationService'i çağırır.
+Gerçek sipariş DB'den kilitlenerek bulunur; yeni geçerli sonuç reservationId'yi
+kaydeder ve PENDING_STOCK → PAYMENT_PENDING geçişi yapar. Aynı reservationId
+tekrarı değişiklik yapmaz; farklı rezervasyon veya uygunsuz durum reddedilir.
+Başarı logu service döndükten sonra yazılır, hata dışarı iletilir.
+Gerçek createOrder artık DB kaydı tamamlandıktan sonra PENDING_STOCK siparişi
+için ReserveStockCommand yayınlar. Aynı HTTP anahtarıyla tekrar çağrıda sipariş
+hâlâ PENDING_STOCK ise talimat yeniden yayınlanır; PAYMENT_PENDING veya daha
+ileri durumlarda yayın yapılmaz. Ödeme başlamaz.
+İlgili 34 test başarılıdır: gerçek PostgreSQL kayıt/sonuç geçişleri, tekrarlar,
+eş zamanlı idempotency ve mock producer/consumer davranışı. Mesaj yayınının
+aktif DB transaction dışında ve order/idempotency commit'inden sonra çağrıldığı
+test edildi. Broker hatasında kayıt kalır; aynı anahtarla manuel tekrar
+yeniden yayınlayabilir. Bu otomatik retry, outbox veya exactly-once değildir.
+Gerçek RabbitMQ kullanan otomatik uçtan uca test bu kapsamda yoktur.
+Eski rastgele lab orderId'leri Order DB'de yoksa artık işlenemez. Bu nedenle
+canlı deneme için önce gerçek sipariş kaydı oluşturulmalıdır.
+Bu aşama henüz Docker'da denenmedi. Aşağıdaki yalnız-log açıklamaları önceki
+kontrol noktasına aittir. DB commit/mesaj yayını ve hata kurtarma sınırları sürer.
+
 Bu endpoint gerçek sipariş oluşturmaz ve Order service akışına bağlı değildir.
 Inventory consumer artık reserveStock çağırır: mesaj tüketildiğinde stok rezervasyonu
 gerçekten yapılır. Yalnız ayrılmış test ürünü ve yeni orderId ile dene.

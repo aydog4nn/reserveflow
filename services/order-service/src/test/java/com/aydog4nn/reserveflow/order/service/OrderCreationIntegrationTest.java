@@ -10,6 +10,11 @@ import com.aydog4nn.reserveflow.order.dto.response.OrderResponse;
 import com.aydog4nn.reserveflow.order.mapper.OrderMapper;
 import com.aydog4nn.reserveflow.order.repository.OrderRepository;
 import com.aydog4nn.reserveflow.order.service.abs.IOrderService;
+import com.aydog4nn.reserveflow.order.service.abs.IOrderReservationService;
+import com.aydog4nn.reserveflow.order.messaging.dto.ReserveStockCommand;
+import com.aydog4nn.reserveflow.order.messaging.producer.InventoryCommandProducer;
+import org.springframework.amqp.AmqpException;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.RepeatedTest;
@@ -46,11 +51,70 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.*;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
+        "spring.rabbitmq.listener.simple.auto-startup=false",
+        "spring.rabbitmq.username=test",
+        "spring.rabbitmq.password=test"
+})
 @Testcontainers
 @Import(OrderCreationIntegrationTest.TestBeans.class)
 class OrderCreationIntegrationTest {
+
+    @MockitoBean
+    private InventoryCommandProducer commandProducer;
+
+    @Autowired
+    private IOrderReservationService reservationService;
+
+    @Test
+    void publishesOnlyAfterCommitAndRepublishesPendingReplay() {
+        String key = UUID.randomUUID().toString();
+        CreateOrderRequest request = request(3);
+        doAnswer(invocation -> {
+            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+            ReserveStockCommand command = invocation.getArgument(0);
+            assertTrue(orderRepository.findById(command.orderId()).isPresent());
+            assertTrue(idempotencyRepository.findById(new RequestIdempotencyId("publish-client", key)).isPresent());
+            return null;
+        }).when(commandProducer).sendReserveStock(any());
+        OrderResponse first = orderService.createOrder(request, "publish-client", key);
+        OrderResponse replay = orderService.createOrder(request, "publish-client", key);
+        assertEquals(first.orderId(), replay.orderId());
+        verify(commandProducer, times(2)).sendReserveStock(
+                new ReserveStockCommand(first.orderId(), request.productId(), 3));
+    }
+
+    @Test
+    void completedReservationReplayDoesNotPublishAgain() {
+        String key = UUID.randomUUID().toString();
+        CreateOrderRequest request = request(3);
+        OrderResponse first = orderService.createOrder(request, "completed-client", key);
+        reservationService.handleStockReserved(first.orderId(), UUID.randomUUID());
+        OrderResponse replay = orderService.createOrder(request, "completed-client", key);
+        assertEquals(OrderStatus.PAYMENT_PENDING, replay.status());
+        verify(commandProducer, times(1)).sendReserveStock(any());
+    }
+
+    @Test
+    void brokerFailureKeepsOrderAndSameKeyCanRetryPublication() {
+        String key = UUID.randomUUID().toString();
+        CreateOrderRequest request = request(3);
+        AmqpException failure = new AmqpException("Test broker outage");
+        doThrow(failure).when(commandProducer).sendReserveStock(any());
+        assertSame(failure, assertThrows(AmqpException.class,
+                () -> orderService.createOrder(request, "failed-publish-client", key)));
+        var record = idempotencyRepository.findById(
+                new RequestIdempotencyId("failed-publish-client", key)).orElseThrow();
+        assertEquals(OrderStatus.PENDING_STOCK,
+                orderRepository.findById(record.getOrderId()).orElseThrow().getStatus());
+        doNothing().when(commandProducer).sendReserveStock(any());
+        OrderResponse replay = orderService.createOrder(request, "failed-publish-client", key);
+        assertEquals(record.getOrderId(), replay.orderId());
+        verify(commandProducer, times(2)).sendReserveStock(
+                new ReserveStockCommand(replay.orderId(), request.productId(), 3));
+    }
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17")
