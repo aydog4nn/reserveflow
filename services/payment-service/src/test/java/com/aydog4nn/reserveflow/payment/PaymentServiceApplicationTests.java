@@ -25,9 +25,12 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "payment.scheduling.enabled=false")
+        properties = {"payment.scheduling.enabled=false", "spring.rabbitmq.listener.simple.auto-startup=false"})
 @Testcontainers
 class PaymentServiceApplicationTests {
+
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate;
 
     @Autowired
     private PaymentRepository payments;

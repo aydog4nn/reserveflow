@@ -12,6 +12,8 @@ import com.aydog4nn.reserveflow.payment.exception.PaymentNotFoundException;
 import com.aydog4nn.reserveflow.payment.repository.PaymentRepository;
 import com.aydog4nn.reserveflow.payment.service.abs.IPaymentService;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
+import com.aydog4nn.reserveflow.payment.messaging.dto.PaymentResultEvent;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -24,10 +26,13 @@ public class PaymentServiceImpl implements IPaymentService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentMapper paymentMapper;
+    private final ApplicationEventPublisher events;
 
-    public PaymentServiceImpl(PaymentRepository paymentRepository, PaymentMapper paymentMapper) {
+    public PaymentServiceImpl(PaymentRepository paymentRepository, PaymentMapper paymentMapper,
+                              ApplicationEventPublisher events) {
         this.paymentRepository = paymentRepository;
         this.paymentMapper = paymentMapper;
+        this.events = events;
     }
 
 
@@ -85,10 +90,12 @@ public class PaymentServiceImpl implements IPaymentService {
         Optional<Payment> existingPayment = validateExistingPayment(request);
 
         if (existingPayment.isPresent()) {
+            publishTerminalResult(existingPayment.get());
             return paymentMapper.toResponse(existingPayment.get());
         }
 
         Payment payment = createAndSavePayment(request);
+        publishTerminalResult(payment);
         return paymentMapper.toResponse(payment);
     }
 
@@ -103,9 +110,10 @@ public class PaymentServiceImpl implements IPaymentService {
                                 Instant.now()
                         );
 
-        payments.forEach(payment ->
-                payment.setStatus(PaymentStatus.SUCCEEDED)
-        );
+        payments.forEach(payment -> {
+            payment.setStatus(PaymentStatus.SUCCEEDED);
+            publishTerminalResult(payment);
+        });
 
         return payments.size();
     }
@@ -119,6 +127,18 @@ public class PaymentServiceImpl implements IPaymentService {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new PaymentNotFoundException(paymentId));
         return paymentMapper.toResponse(payment);
+    }
+
+    private void publishTerminalResult(Payment payment) {
+        if (payment.getStatus() == PaymentStatus.PENDING) {
+            return;
+        }
+        events.publishEvent(new PaymentResultEvent(
+                payment.getOrderId(), payment.getId(), payment.getAmount(), payment.getCurrency(),
+                payment.getStatus() == PaymentStatus.SUCCEEDED
+                        ? PaymentResultEvent.Outcome.SUCCEEDED : PaymentResultEvent.Outcome.FAILED,
+                payment.getFailureReason()
+        ));
     }
 
 }

@@ -1,8 +1,10 @@
 package com.aydog4nn.reserveflow.order.service.abs;
 
+import com.aydog4nn.reserveflow.order.dto.response.OrderResponse;
+
 import java.util.UUID;
 
 public interface IOrderReservationService {
 
-    void handleStockReserved(UUID orderId, UUID reservationId);
+    OrderResponse handleStockReserved(UUID orderId, UUID reservationId);
 }

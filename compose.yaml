@@ -84,6 +84,9 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/payment_db
       DB_USERNAME: payment_app
       DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Payment parolasi gerekli}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
     depends_on:
       db-setup:
         condition: service_completed_successfully
