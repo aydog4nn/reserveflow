@@ -9,7 +9,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'checkout scm',
+               checkout scm
 
             }
         }
