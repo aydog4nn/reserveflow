@@ -58,5 +58,19 @@ pipeline {
                 '''
             }
         }
+        stage('Container smoke testi') {
+            steps {
+                sh '''
+                    set -eu
+
+                    python3 --version
+
+                    COMMIT=$(git rev-parse --short=12 HEAD)
+                    export CI_IMAGE_TAG="ci-${BUILD_NUMBER}-${COMMIT}"
+
+                    python3 scripts/smoke_container_flow.py
+                '''
+            }
+        }
     }
 }
