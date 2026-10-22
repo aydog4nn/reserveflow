@@ -42,5 +42,21 @@ pipeline {
                 }
             }
         }
+        stage('Docker image üretimi') {
+            steps {
+                sh '''
+                    set -eu
+
+                    COMMIT=$(git rev-parse --short=12 HEAD)
+                    IMAGE_TAG="ci-${BUILD_NUMBER}-${COMMIT}"
+
+                    for SERVICE in inventory order payment; do
+                        docker build \
+                            --tag "reserveflow-${SERVICE}:${IMAGE_TAG}" \
+                            "services/${SERVICE}-service"
+                    done
+                '''
+            }
+        }
     }
 }
