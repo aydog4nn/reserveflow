@@ -1,3 +1,4 @@
+import http.client
 import json
 import os
 from pathlib import Path
@@ -74,7 +75,8 @@ def wait_for_api(url, timeout=120):
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 return
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError,
+                ConnectionError, http.client.RemoteDisconnected):
             pass
 
         time.sleep(1)
