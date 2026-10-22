@@ -9,9 +9,8 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    credentialsId: 'reserveflow-github-readonly',
-                    url: 'git@github.com:aydog4nn/reserveflow.git'
+                git branch: 'checkout scm',
+
             }
         }
 
