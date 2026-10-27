@@ -1,0 +1,65 @@
+- name: ReserveFlow dağıtım ortamını hazırla
+  hosts: lab
+  gather_facts: false
+
+  tasks:
+    - name: Dağıtım klasörünü oluştur
+      ansible.builtin.file:
+        path: /home/vboxuser/reserveflow-deploy
+        state: directory
+        mode: "0700"
+
+    - name: Altyapı klasörünü oluştur
+      ansible.builtin.file:
+        path: /home/vboxuser/reserveflow-deploy/infra
+        state: directory
+        mode: "0700"
+
+    - name: Compose sunucusunu kopyala
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../compose.deploy.yaml"
+        dest: /home/vboxuser/reserveflow-deploy/compose.deploy.yaml
+        mode: "0600"
+
+    - name: Veritabanı hazırlık dosyalarını sunucuya kopyala
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../postgres/"
+        dest: /home/vboxuser/reserveflow-deploy/infra/postgres/
+        mode: preserve
+
+    - name: Compose yapılandırmasını doğrula
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - compose.deploy.yaml
+          - config
+          - --quiet
+        chdir: /home/vboxuser/reserveflow-deploy
+      changed_when: false
+
+    - name: ReserveFlow servislerini çalıştır
+      community.docker.docker_compose_v2:
+        project_src: /home/vboxuser/reserveflow-deploy
+        project_name: reserveflow-deploy
+        files:
+          - compose.deploy.yaml
+        state: present
+        build: never
+        pull: missing
+
+    - name: Inventory ve Order HTTP yanıtını bekle
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        method: GET
+        status_code: [ 200, 404 ]
+        timeout: 5
+      loop:
+        - http://127.0.0.1:18000/
+        - http://127.0.0.1:18001/
+      register: api_check
+      until: api_check.status in [200, 404]
+      retries: 30
+      delay: 3
+      changed_when: false
