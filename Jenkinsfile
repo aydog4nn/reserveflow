@@ -72,5 +72,27 @@ pipeline {
                 '''
             }
         }
+        stage('GHCR erişim kontrolü') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'reserveflow-ghcr',
+                    usernameVariable: 'GHCR_USER',
+                    passwordVariable: 'GHCR_TOKEN'
+                )]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        export DOCKER_CONFIG="$(mktemp -d)"
+                        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+
+                        printf '%s' "$GHCR_TOKEN" |
+                            docker login ghcr.io \
+                                --username "$GHCR_USER" \
+                                --password-stdin
+                    '''
+                }
+            }
+        }
     }
 }
