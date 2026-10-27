@@ -1,0 +1,130 @@
+name: reserveflow-deploy
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: inventory_db
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD gerekli}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  db-setup:
+    image: postgres:17
+    logging: *logging
+    entrypoint: [/bin/sh, /provision/provision.sh]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD gerekli}
+      INVENTORY_DB_PASSWORD: ${INVENTORY_DB_PASSWORD:?Inventory parolasi gerekli}
+      ORDER_DB_PASSWORD: ${ORDER_DB_PASSWORD:?Order parolasi gerekli}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Payment parolasi gerekli}
+    volumes:
+      - ./infra/postgres:/provision:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:4.2.9-management
+    hostname: reserveflow-deploy-rabbitmq
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
+      RABBITMQ_DEFAULT_VHOST: reserveflow
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: [CMD-SHELL, 'rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_running']
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
+  inventory:
+    image: ghcr.io/aydog4nn/reserveflow-inventory:${IMAGE_TAG:?IMAGE_TAG gerekli}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx256m
+      DB_URL: jdbc:postgresql://postgres:5432/inventory_db
+      DB_USERNAME: inventory_app
+      DB_PASSWORD: ${INVENTORY_DB_PASSWORD:?Inventory parolasi gerekli}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
+    ports:
+      - "127.0.0.1:18000:8080"
+    depends_on:
+      db-setup:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  payment:
+    image: ghcr.io/aydog4nn/reserveflow-payment:${IMAGE_TAG:?IMAGE_TAG gerekli}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx256m
+      DB_URL: jdbc:postgresql://postgres:5432/payment_db
+      DB_USERNAME: payment_app
+      DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Payment parolasi gerekli}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
+      PAYMENT_SCHEDULING_ENABLED: "true"
+    depends_on:
+      db-setup:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  order:
+    image: ghcr.io/aydog4nn/reserveflow-order:${IMAGE_TAG:?IMAGE_TAG gerekli}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx256m
+      DB_URL: jdbc:postgresql://postgres:5432/order_db
+      DB_USERNAME: order_app
+      DB_PASSWORD: ${ORDER_DB_PASSWORD:?Order parolasi gerekli}
+      INVENTORY_BASE_URL: http://inventory:8080
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:?RabbitMQ kullanicisi gerekli}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RabbitMQ parolasi gerekli}
+      MESSAGING_LAB_ENABLED: "false"
+    ports:
+      - "127.0.0.1:18001:8081"
+    depends_on:
+      db-setup:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      inventory:
+        condition: service_started
+      payment:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
