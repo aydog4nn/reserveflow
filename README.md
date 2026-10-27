@@ -7,12 +7,18 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 | Bilgi | Durum |
 |---|---|
 | Belge tarihi | 27 Ekim 2026 |
-| Proje aşaması | Temel sipariş akışı, Jenkins CI, container smoke testi ve GHCR image yayını doğrulandı; kalıcı sunucu dağıtımı/CD ve ileri mesaj güvenilirliği henüz yok |
+| Proje aşaması | Temel sipariş akışı, Jenkins CI, GHCR yayını ve Ubuntu'da manuel Compose dağıtımı doğrulandı; otomatik CD ve ileri mesaj güvenilirliği henüz yok |
 | İlk çalışma dönemi | 30 gün; günlük yaklaşık 5–6 saat varsayımı |
 | Ana hedef | Backend/mikroservis kararları ile DevOps operasyonlarını aynı çalışan sistemde göstermek |
 | Kullanım | Yerel ve staging laboratuvarı; gerçek ödeme veya gerçek müşteri verisi yok |
 
 > Aşağıdaki mevcut durum bölümü uygulanmış işleri, numaralı mimari bölümleri ise büyük ölçüde hedef tasarımı anlatır. Hedef diyagramlar ve 30 aşamalı plan bir tamamlanma beyanı değildir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
+
+### Ubuntu manuel dağıtımı — 27 Ekim 2026
+
+GHCR'deki `ci-22-debc7c777f9b` image'ları Ubuntu ARM64 VM'de yeniden derlenmeden çalıştırıldı. Üç servis açılışı, veritabanı migration'ları ve RabbitMQ bağlantıları loglarda görüldü. Kullanıcı SUCCESS siparişinin CONFIRMED olduğunu, stok değerlerinin 7/0/7'ye geldiğini ve servis restart'ı sonrasında korunduğunu doğruladı. Bu kontrol otomatik CD, yüksek erişilebilirlik veya yedekten geri dönüş kanıtı değildir.
+
+Repo dosyaları: `compose.deploy.yaml`, `.env.deploy.example` ve [Ubuntu dağıtım rehberi](docs/runbooks/ubuntu-deployment.md). Gerçek parolalar yalnız sunucudaki `.env` dosyasında tutulur. Repodaki standart mount yolu `infra/postgres/` olduğundan ilk manuel kurulumdaki doğrudan `postgres/` yerleşimini güncellerken rehberi izleyin. Ansible otomasyonu sonraki adımdır.
 
 ### Jenkins CI ve GHCR yayını — 27 Ekim 2026
 
