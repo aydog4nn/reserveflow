@@ -6,13 +6,33 @@ ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucu
 
 | Bilgi | Durum |
 |---|---|
-| Belge tarihi | 21 Ekim 2026 |
-| Proje aşaması | Gerçek sipariş → stok → ödeme → stok kesinleştirme/bırakma → CONFIRMED/CANCELLED temel akışı doğrulandı; CI/CD ve ileri mesaj güvenilirliği henüz yok |
+| Belge tarihi | 27 Ekim 2026 |
+| Proje aşaması | Temel sipariş akışı, Jenkins CI, container smoke testi ve GHCR image yayını doğrulandı; kalıcı sunucu dağıtımı/CD ve ileri mesaj güvenilirliği henüz yok |
 | İlk çalışma dönemi | 30 gün; günlük yaklaşık 5–6 saat varsayımı |
 | Ana hedef | Backend/mikroservis kararları ile DevOps operasyonlarını aynı çalışan sistemde göstermek |
 | Kullanım | Yerel ve staging laboratuvarı; gerçek ödeme veya gerçek müşteri verisi yok |
 
 > Aşağıdaki mevcut durum bölümü uygulanmış işleri, numaralı mimari bölümleri ise büyük ölçüde hedef tasarımı anlatır. Hedef diyagramlar ve 30 aşamalı plan bir tamamlanma beyanı değildir. Kurs tamamlama veya belge varlığı, çalışan sistem kanıtı sayılmaz.
+
+### Jenkins CI ve GHCR yayını — 27 Ekim 2026
+
+`Jenkinsfile`, GitHub'dan alınan kod için şu sırayı uygular:
+
+```text
+Checkout → Java/Maven kontrolü → Testler → Üç Docker image'ı üretimi
+    → İzole container smoke testi → GHCR'ye giriş ve image yükleme
+```
+
+- Inventory, Order ve Payment image'ları bir kez üretilir. `scripts/smoke_container_flow.py`, `compose.ci.yaml` ile bu image'ları ayrı Compose projesinde çalıştırır; SUCCESS, DECLINE ve DELAY akışlarını, stok sonuçlarını ve terminal sipariş tekrarını kontrol eder. Geçici test ortamı sonunda temizlenir.
+- Yalnız önceki aşamalar başarılı olursa yayınlama çalışır. Yerel image'lara registry adresi eklenir; yayınlama için tekrar derleme yapılmaz.
+- Hedefler `ghcr.io/aydog4nn/reserveflow-inventory`, `ghcr.io/aydog4nn/reserveflow-order` ve `ghcr.io/aydog4nn/reserveflow-payment` adresleridir.
+- Etiket `ci-<BUILD_NUMBER>-<12-karakter-Git-SHA>` biçimindedir. Jenkins #22 çalıştırması kullanıcı tarafından `Finished: SUCCESS` çıktısıyla doğrulandı; yayınlanan sürüm etiketi `ci-22-debc7c777f9b` oldu.
+- Registry kimlik bilgisi Jenkins Credentials içindeki `reserveflow-ghcr` kaydından alınır. Token kaynak koda yazılmaz; `--password-stdin` ile aktarılır. Docker giriş dosyaları geçici `DOCKER_CONFIG` dizininde tutulur ve aşama çıkışında temizlenir.
+- #21 çalıştırmasında Inventory yayını tamamlanmış, Order yayını `denied` ile durmuştu. Aynı pipeline'ın #22 tekrarında yayın tamamlandı; ilk hatanın kök nedeni kesinleştirilmedi.
+
+**Mevcut sınırlar:** İş elle tetiklenir; derleme controller makinesinde çalışır. Registry erişimi olan pipeline yalnız güvenilir kodla çalıştırılmalıdır; henüz branch bazlı yayınlama kısıtı yoktur. GHCR'de paket saklamak dağıtım değildir: kalıcı sunucu ortamı, otomatik CD, Kubernetes, Ansible ve Terraform henüz uygulanmadı. Üç image'ın yayını atomik değildir; kısmi başarısızlıkta bazıları yüklenmiş olabilir. Bağımsız agent, image taraması/imzalama ve registry sürüm saklama politikası henüz yoktur.
+
+**Sonraki dağıtım aşaması:** Test edilmiş image'ları GHCR'den çekerek Ubuntu'da ayrı bir Docker Compose ortamında çalıştırmak; bu adımlar anlaşıldıktan sonra Ansible ile otomatikleştirmek. Terraform, Kubernetes, Prometheus ve Grafana öğrenme yol haritasında kalır; bu aşamanın tamamlanması bunların uygulandığı anlamına gelmez.
 
 ### Güncel temel akış — 21 Ekim 2026
 
@@ -364,7 +384,7 @@ docker compose logs --tail=80 inventory
 - `docker compose down` named volume'u korur. **`docker compose down -v` veritabanı volume'unu ve verilerini siler.**
 - `POSTGRES_*` başlangıç ayarları yalnız boş veri alanının ilk kurulumunda uygulanır; `.env` parolasını değiştirmek mevcut DB parolasını değiştirmez.
 
-Docker build şu an `-DskipTests` kullanır; image build başarısı testlerin geçtiğinin kanıtı değildir. Jenkins henüz yoktur.
+Docker build `-DskipTests` kullanır; image build başarısı tek başına testlerin geçtiğinin kanıtı değildir. Güncel Jenkins pipeline'ı image üretiminden önce Maven testlerini, üretimden sonra izole container smoke testini çalıştırır.
 
 ### Order → Inventory HTTP bağlantı altyapısı
 
@@ -1350,6 +1370,8 @@ Geliştirmede Order/Inventory API'leri localhost'a yayınlanır. Payment, DB, br
 
 ## 12. Jenkins pipeline modeli
 
+Bu bölüm hedef CI/CD tasarımıdır; mevcut lab uygulaması üstteki 27 Ekim kontrol noktasında açıklanır. Aşağıdaki ayrı agent, branch kısıtları, tarama ve Kubernetes dağıtımı henüz uygulanmış değildir.
+
 ```mermaid
 flowchart TD
     PR["PR or trusted branch change"] --> Checkout["Checkout pinned revision"]
@@ -1615,9 +1637,9 @@ Her milestone sonunda şu sorular cevaplanır: “Hangi problemi çözdüm?”, 
 | Milestone | Durum |
 |---|---|
 | M0: README ve hedef mimari | Tasarım belgesi hazır |
-| M1: Üç servis ve bağımsız veri sahipliği | Planlandı |
-| M2: Saga, stok doğruluğu ve mesaj güvenilirliği | Planlandı |
-| M3: Docker/Compose ve Jenkins CI | Planlandı |
+| M1: Üç servis ve bağımsız veri sahipliği | Temel uygulama tamamlandı |
+| M2: Saga, stok doğruluğu ve mesaj güvenilirliği | Temel saga akışı doğrulandı; ileri güvenilirlik çalışmaları eksik |
+| M3: Docker/Compose ve Jenkins CI | Temel CI, container smoke testi ve GHCR yayını doğrulandı |
 | M4: Terraform/Ansible ve Kubernetes staging CD | Planlandı |
 | M5: Monitoring, rollback ve restore | Planlandı |
 | M6: Demo, kaynak eşleştirmesi ve kanıt paketi | Planlandı |
@@ -1682,4 +1704,4 @@ ADR belgelerinde context, seçenekler, seçilen çözüm, sonuçlar ve doğrulam
 
 ---
 
-**Sonraki adım:** Inventory repository arayüzleri ve stok rezervasyonu iş kuralları. Inventory Service scaffold ve model sınıfları hazırdır; diğer servisler ve altyapı henüz geliştirilmemiştir.
+**Sonraki adım:** GHCR'deki test edilmiş image'larla ayrı Ubuntu çalışma ortamına ilk Docker Compose dağıtımı; ardından Ansible otomasyonu. Güncel kapsam üstteki 27 Ekim kontrol noktasındadır.

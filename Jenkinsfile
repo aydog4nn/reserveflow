@@ -72,5 +72,38 @@ pipeline {
                 '''
             }
         }
+        stage('GHCR image yükleme') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'reserveflow-ghcr',
+                    usernameVariable: 'GHCR_USER',
+                    passwordVariable: 'GHCR_TOKEN'
+                )]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        export DOCKER_CONFIG="$(mktemp -d)"
+                        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+
+                        printf '%s' "$GHCR_TOKEN" |
+                            docker login ghcr.io \
+                                --username "$GHCR_USER" \
+                                --password-stdin
+
+                        COMMIT=$(git rev-parse --short=12 HEAD)
+                        IMAGE_TAG="ci-${BUILD_NUMBER}-${COMMIT}"
+
+                        for SERVICE in inventory order payment; do
+                            LOCAL_IMAGE="reserveflow-${SERVICE}:${IMAGE_TAG}"
+                            REMOTE_IMAGE="ghcr.io/aydog4nn/reserveflow-${SERVICE}:${IMAGE_TAG}"
+
+                            docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE"
+                            docker push "$REMOTE_IMAGE"
+                        done
+                    '''
+                }
+            }
+        }
     }
 }
