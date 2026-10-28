@@ -13,6 +13,21 @@ pipeline {
 
             }
         }
+        stage('Ansible dosya kontrolü') {
+            steps {
+                withEnv(['PATH+ANSIBLE=/var/lib/jenkins/ansible-venv/bin']) {
+                    sh '''
+                        set -eu
+                        ansible-playbook \
+                            -i infra/ansible/inventory.yaml \
+                            infra/ansible/deploy.yaml \
+                            --syntax-check
+
+                        ansible-lint infra/ansible/
+                    '''
+                }
+            }
+        }
 
         stage('Java kontrolü') {
             steps {
@@ -105,5 +120,6 @@ pipeline {
                 }
             }
         }
+
     }
 }
