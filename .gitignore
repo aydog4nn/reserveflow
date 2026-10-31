@@ -41,6 +41,7 @@ build/
 *.tfstate
 *.tfstate.*
 .terraform/
+.ansible/
 
 .env
 .env.*
