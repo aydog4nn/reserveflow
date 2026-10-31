@@ -1,0 +1,68 @@
+- name: Reserveflow sunucusu hazırla
+  hosts: lab
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: İşletim sisteminin ubuntu olduğunu doğrula
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+        fail_msg: Bu playbook yalnız Ubuntu için hazırlanmıştır.
+
+    - name: Docker kurulumu için gerekli paketleri hazırla
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+        state: present
+        cache_valid_time: 3600
+
+    - name: APT anahtar klasörünü hazırla
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Docker paket imzalama anahtarını indir
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Paket mimarisini öğren
+      ansible.builtin.command:
+        argv:
+          - dpkg
+          - --print-architecture
+      register: docker_architecture
+      changed_when: false
+
+    - name: Docker apt deposunu tanımla
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: {{ ansible_facts['distribution_release'] }}
+          Components: stable
+          Architectures: {{ docker_architecture.stdout }}
+          Signed-By: /etc/apt/keyrings/docker.asc
+
+    - name: Docker paketlerini kur
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Docker servisinin çalışmasını sağla
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
