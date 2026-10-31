@@ -7,3 +7,4 @@ all:
           ansible_port: 2222
           ansible_user: vboxuser
           ansible_python_interpreter: /usr/bin/python3.14
+          ansible_become_exe: /usr/bin/sudo.ws

@@ -18,10 +18,15 @@ pipeline {
                 withEnv(['PATH+ANSIBLE=/var/lib/jenkins/ansible-venv/bin']) {
                     sh '''
                         set -eu
-                        ansible-playbook \
-                            -i infra/ansible/inventory.yaml \
-                            infra/ansible/deploy.yaml \
-                            --syntax-check
+                        ansible-galaxy collection install \
+                            -r infra/ansible/requirements.yaml
+
+                        for PLAYBOOK in setup deploy; do
+                            ansible-playbook \
+                                -i infra/ansible/inventory.yaml \
+                                "infra/ansible/${PLAYBOOK}.yaml" \
+                                --syntax-check
+                        done
 
                         ansible-lint infra/ansible/
                     '''

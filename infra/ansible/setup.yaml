@@ -37,6 +37,7 @@
           - --print-architecture
       register: docker_architecture
       changed_when: false
+      check_mode: false
 
     - name: Docker apt deposunu tanımla
       ansible.builtin.copy:
