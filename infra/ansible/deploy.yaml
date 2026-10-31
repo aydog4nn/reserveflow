@@ -53,7 +53,7 @@
       ansible.builtin.uri:
         url: "{{ item }}"
         method: GET
-        status_code: [ 200, 404 ]
+        status_code: [200, 404]
         timeout: 5
       loop:
         - http://127.0.0.1:18000/
