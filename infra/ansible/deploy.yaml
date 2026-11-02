@@ -1,8 +1,17 @@
 - name: ReserveFlow dağıtım ortamını hazırla
   hosts: lab
   gather_facts: false
+  vars:
+    deploy_image_tag: "ci-22-debc7c777f9b"
+
 
   tasks:
+
+    - name: Yerel şifreli kasayı oku
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../.env.ansible-vault"
+      no_log: true
+
     - name: Dağıtım klasörünü oluştur
       ansible.builtin.file:
         path: /home/vboxuser/reserveflow-deploy
@@ -14,6 +23,16 @@
         path: /home/vboxuser/reserveflow-deploy/infra
         state: directory
         mode: "0700"
+
+
+    - name: Dağıtım ortam dosyasını şablondan oluştur
+      ansible.builtin.template:
+        src: deploy.env.j2
+        dest: /home/vboxuser/reserveflow-deploy/.env
+        mode: "0600"
+        backup: true
+      no_log: true
+      diff: false
 
     - name: Compose sunucusunu kopyala
       ansible.builtin.copy:

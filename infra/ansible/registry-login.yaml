@@ -1,0 +1,23 @@
+- name: Dağıtım kullancısını GHCR deposuna bağla
+  hosts: lab
+  gather_facts: false
+
+  tasks:
+    - name: Registry modülünün Python bağımlılığını hazırla
+      become: true
+      ansible.builtin.apt:
+        name: python3-requests
+        state: present
+
+    - name: Yerel şifreli kasayı oku
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../.env.ansible-vault"
+      no_log: true
+
+    - name: GHCR girişini gerçekleştir
+      community.docker.docker_login:
+        registry_url: ghcr.io
+        username: "{{ vault_registry_username }}"
+        password: "{{ vault_registry_token }}"
+        state: present
+      no_log: true

@@ -67,3 +67,11 @@
         name: docker
         state: started
         enabled: true
+
+    - name: Dağıtım kullanıcısına Docker erişimi ver
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups:
+          - docker
+        append: true
+
