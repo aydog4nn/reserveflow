@@ -7,12 +7,19 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout') {
             steps {
-               checkout scm
+                script {
+                    def checkoutResult = checkout scm
 
+                    env.GIT_BRANCH = checkoutResult.GIT_BRANCH ?: ''
+
+                    echo "Kontrol edilen dal: ${env.GIT_BRANCH}"
+                }
             }
         }
+
 
         stage('Vault erişimini doğrula') {
             steps {
