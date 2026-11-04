@@ -9,7 +9,7 @@
 
     - name: Yerel şifreli kasayı oku
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../.env.ansible-vault"
+        file: "{{ deployment_vault_file | default(playbook_dir ~ '/../../.env.ansible-vault') }}"
       no_log: true
 
     - name: Dağıtım klasörünü oluştur
