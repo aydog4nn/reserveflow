@@ -13,6 +13,60 @@ pipeline {
 
             }
         }
+
+        stage('Vault erişimini doğrula') {
+            steps {
+                withCredentials([
+                    file(
+                        credentialsId: 'reserveflow-ansible-vault-file',
+                        variable: 'DEPLOY_VAULT_FILE'
+                    ),
+                    string(
+                        credentialsId: 'reserveflow-ansible-vault-password',
+                        variable: 'DEPLOY_VAULT_PASSWORD'
+                    )
+                ]) {
+                    withEnv(['PATH+ANSIBLE=/var/lib/jenkins/ansible-venv/bin']) {
+                        sh '''
+                            set -eu
+                            set +x
+                            umask 077
+
+                            TEMP_DIR=$(mktemp -d)
+                            trap 'rm -rf "$TEMP_DIR"' EXIT
+
+                            printf '%s\\n' "$DEPLOY_VAULT_PASSWORD" \
+                                > "$TEMP_DIR/vault-password"
+
+                            ansible-vault view \
+                                --vault-password-file "$TEMP_DIR/vault-password" \
+                                "$DEPLOY_VAULT_FILE" > /dev/null
+
+                            echo "Vault dosyası başarıyla açıldı."
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Ansible bağlantısını doğrula') {
+            steps {
+                sshagent(credentials: ['reserveflow-deploy-ssh']) {
+                    withEnv(['PATH+ANSIBLE=/var/lib/jenkins/ansible-venv/bin']) {
+                        sh '''
+                            set -eu
+
+                            ANSIBLE_HOST_KEY_CHECKING=True \
+                            ansible \
+                                -i infra/ansible/inventory.jenkins.yaml \
+                                lab \
+                                -m ansible.builtin.ping
+                        '''
+                    }
+                }
+            }
+        }
+
         stage('Ansible dosya kontrolü') {
             steps {
                 withEnv(['PATH+ANSIBLE=/var/lib/jenkins/ansible-venv/bin']) {
@@ -126,5 +180,73 @@ pipeline {
             }
         }
 
+        stage('Dağıtım onayı') {
+            when {
+                expression {
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
+            }
+
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    input message: 'Test edilen sürüm Ubuntu ortamına dağıtılsın mı?',
+                          ok: 'Dağıt'
+                }
+            }
+        }
+        stage('Ubuntu dağıtımı') {
+            when {
+                expression {
+                    env.GIT_BRANCH == 'origin/main' ||
+                    env.GIT_BRANCH == 'main'
+                }
+            }
+
+            steps {
+                sshagent(credentials: ['reserveflow-deploy-ssh']) {
+                    withCredentials([
+                        file(
+                            credentialsId: 'reserveflow-ansible-vault-file',
+                            variable: 'DEPLOY_VAULT_FILE'
+                        ),
+                        string(
+                            credentialsId: 'reserveflow-ansible-vault-password',
+                            variable: 'DEPLOY_VAULT_PASSWORD'
+                        )
+                    ]) {
+                        withEnv([
+                            'PATH+ANSIBLE=/var/lib/jenkins/ansible-venv/bin',
+                            'ANSIBLE_HOST_KEY_CHECKING=True'
+                        ]) {
+                            sh '''
+                                set -eu
+                                set +x
+                                umask 077
+
+                                TEMP_DIR=$(mktemp -d)
+                                trap 'rm -rf "$TEMP_DIR"' EXIT
+
+                                printf '%s\\n' "$DEPLOY_VAULT_PASSWORD" \
+                                    > "$TEMP_DIR/vault-password"
+
+                                COMMIT=$(git rev-parse --short=12 HEAD)
+                                export DEPLOY_IMAGE_TAG="ci-${BUILD_NUMBER}-${COMMIT}"
+
+                                EXTRA_VARS=$(python3 -c 'import json, os; print(json.dumps({"deployment_vault_file": os.environ["DEPLOY_VAULT_FILE"], "deploy_image_tag": os.environ["DEPLOY_IMAGE_TAG"]}))')
+
+                                echo "Dağıtılacak sürüm: $DEPLOY_IMAGE_TAG"
+
+                                ansible-playbook \
+                                    -i infra/ansible/inventory.jenkins.yaml \
+                                    infra/ansible/deploy.yaml \
+                                    --vault-password-file "$TEMP_DIR/vault-password" \
+                                    --extra-vars "$EXTRA_VARS"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
     }
 }

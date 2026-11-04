@@ -1,0 +1,10 @@
+all:
+  children:
+    lab:
+      hosts:
+        homelab:
+          ansible_host: 127.0.0.1
+          ansible_port: 22
+          ansible_user: vboxuser
+          ansible_python_interpreter: /usr/bin/python3.14
+          ansible_become_exe: /usr/bin/sudo.ws
