@@ -1,0 +1,22 @@
+# Optional overlay for compose.deploy.yaml. The backend images must contain the
+# product catalog and order query endpoints introduced with the frontend.
+services:
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      INVENTORY_UPSTREAM: inventory:8080
+      ORDER_UPSTREAM: order:8081
+    ports:
+      - "127.0.0.1:18002:80"
+    depends_on:
+      inventory:
+        condition: service_started
+      order:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
