@@ -1,5 +1,9 @@
 # ReserveFlow
 
+### Öğretici demo arayüzü
+
+Ürün seçimi, ödeme senaryoları, sipariş durumu sorgulama, açıklamalı servis diyagramı ve sunum rehberi için [frontend kurulum ve kullanım rehberine](frontend/README.md) bakın. Canlı mod gerçek API'leri kullanır; ayrıca açıkça etiketlenmiş, backend gerektirmeyen rehberli örnek modu bulunur. Bu dal ürün listeleme ve sipariş sorgulama endpoint'lerini ekler; frontend mevcut Jenkins/Ansible dağıtımına otomatik dahil değildir.
+
 **Sipariş, stok rezervasyonu ve ödeme simülasyonu için mikroservis ve DevOps laboratuvarı.**
 
 ReserveFlow; sınırlı stokla eşzamanlı sipariş alınmasını, ödeme sonucuna göre stok rezervasyonunun tamamlanmasını veya bırakılmasını ve bu servislerin otomatik dağıtımını modelleyen kişisel bir öğrenme projesidir.
