@@ -1,0 +1,24 @@
+- name: ReserveFlow imajlarını sunucuda üret
+  hosts: lab
+  gather_facts: true
+
+  vars:
+    build_root: "{{ ansible_env.HOME }}/reserveflow-build"
+    build_image_tag: "amd64-local"
+    build_services:
+      - inventory
+      - order
+      - payment
+
+  tasks:
+    - name: Sunucunun AMD64 olduğunu doğrula
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['architecture'] == 'x86_64'
+        fail_msg: Bu kurulum AMD64 sunucu için hazırlanmıştır.
+
+    - name: Her servisin kaynaklarını taşı ve imajını üret
+      ansible.builtin.include_tasks: build-service.yaml
+      loop: "{{ build_services }}"
+      loop_control:
+        loop_var: service_name
