@@ -79,6 +79,7 @@
         cache_valid_time: 3600
 
     - name: Jenkins için ayrı Ansible ortamı oluştur
+      become: true
       become_user: jenkins
       ansible.builtin.pip:
         name:
@@ -91,4 +92,4 @@
     - name: Jenkins servisini yeniden başlat
       ansible.builtin.systemd_service:
         name: jenkins
-        state: restarted    
+        state: restarted
