@@ -1,0 +1,37 @@
+- name: "{{ service_name }} için kaynak klasörünü oluştur"
+  ansible.builtin.file:
+    path: "{{ build_root }}/services/{{ service_name }}-service"
+    state: directory
+    mode: "0755"
+
+- name: "{{ service_name }} kaynaklarını sunucuya taşı"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../services/{{ service_name }}-service/{{ item }}"
+    dest: "{{ build_root }}/services/{{ service_name }}-service/"
+    mode: preserve
+  loop:
+    - Dockerfile
+    - .dockerignore
+    - pom.xml
+    - src
+  register: service_sources
+
+- name: "{{ service_name }} imajı mevcut mu kontrol et"
+  community.docker.docker_image_info:
+    name: "ghcr.io/aydog4nn/reserveflow-{{ service_name }}:{{ build_image_tag }}"
+  register: service_image
+
+- name: "{{ service_name }} imajını üret"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - build
+      - --platform
+      - linux/amd64
+      - --tag
+      - "ghcr.io/aydog4nn/reserveflow-{{ service_name }}:{{ build_image_tag }}"
+      - "{{ build_root }}/services/{{ service_name }}-service"
+  when: service_sources.changed or service_image.images | length == 0
+  changed_when: true
+  async: 3600
+  poll: 10
