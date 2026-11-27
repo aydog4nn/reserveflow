@@ -1,10 +1,10 @@
-- name: "{{ service_name }} için kaynak klasörünü oluştur"
+- name: "Kaynak klasörünü oluştur: {{ service_name }}"
   ansible.builtin.file:
     path: "{{ build_root }}/services/{{ service_name }}-service"
     state: directory
     mode: "0755"
 
-- name: "{{ service_name }} kaynaklarını sunucuya taşı"
+- name: "Kaynakları sunucuya taşı: {{ service_name }}"
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../services/{{ service_name }}-service/{{ item }}"
     dest: "{{ build_root }}/services/{{ service_name }}-service/"
@@ -16,12 +16,12 @@
     - src
   register: service_sources
 
-- name: "{{ service_name }} imajı mevcut mu kontrol et"
+- name: "İmajın varlığını kontrol et: {{ service_name }}"
   community.docker.docker_image_info:
     name: "ghcr.io/aydog4nn/reserveflow-{{ service_name }}:{{ build_image_tag }}"
   register: service_image
 
-- name: "{{ service_name }} imajını üret"
+- name: "İmajı üret: {{ service_name }}"
   ansible.builtin.command:
     argv:
       - docker
