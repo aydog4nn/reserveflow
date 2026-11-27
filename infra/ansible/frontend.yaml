@@ -1,0 +1,53 @@
+- name: Frontend klasörünü oluştur
+  ansible.builtin.file:
+    path: /home/vboxuser/reserveflow-deploy/frontend
+    state: directory
+    mode: "0755"
+
+- name: Frontend kaynaklarını sunucuya taşı
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../frontend/{{ item }}"
+    dest: /home/vboxuser/reserveflow-deploy/frontend/
+    mode: preserve
+  loop:
+    - Dockerfile
+    - .dockerignore
+    - package.json
+    - package-lock.json
+    - index.html
+    - tsconfig.json
+    - vite.config.mjs
+    - nginx.conf.template
+    - public
+    - src
+  register: frontend_sources
+
+- name: Frontend Compose dosyasını sunucuya taşı
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../compose.frontend.yaml"
+    dest: /home/vboxuser/reserveflow-deploy/compose.frontend.yaml
+    mode: "0600"
+
+- name: Backend ve frontend Compose yapılandırmasını uygula
+  community.docker.docker_compose_v2:
+    project_src: /home/vboxuser/reserveflow-deploy
+    project_name: reserveflow-deploy
+    files:
+      - compose.deploy.yaml
+      - compose.frontend.yaml
+    state: present
+    build: "{{ 'always' if frontend_sources.changed else 'policy' }}"
+    pull: missing
+  async: 3600
+  poll: 10
+
+- name: Frontend HTTP yanıtını bekle
+  ansible.builtin.uri:
+    url: http://127.0.0.1:18002/
+    status_code: 200
+    timeout: 5
+  register: frontend_check
+  until: frontend_check.status | default(0) == 200
+  retries: 30
+  delay: 3
+  changed_when: false

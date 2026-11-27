@@ -82,3 +82,6 @@
       retries: 30
       delay: 3
       changed_when: false
+
+    - name: Frontend dağıtımını gerçekleştir
+      ansible.builtin.include_tasks: frontend.yaml
